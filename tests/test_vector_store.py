@@ -182,38 +182,34 @@ def test_force_reindex_overwrites_existing_ids(monkeypatch):
     assert result.vectors_skipped == 0
 
 
-def test_reports_vector_and_unique_document_counts():
+def test_status_uses_stats_without_enumerating_vectors():
     class StatusStats:
         total_vector_count = 3
 
     class StatusIndex:
+        stats_calls = 0
+
         def describe_index_stats(self):
+            self.stats_calls += 1
             return StatusStats()
 
         def list(self, **kwargs):
-            return iter([["id-1", "id-2"], ["id-3"]])
+            pytest.fail("Routine status must not list vectors")
 
         def fetch(self, ids, **kwargs):
-            sources = {
-                "id-1": "first.pdf",
-                "id-2": "first.pdf",
-                "id-3": "second.txt",
-            }
-            return {
-                "vectors": {
-                    vector_id: {"metadata": {"s3_key": sources[vector_id]}}
-                    for vector_id in ids
-                }
-            }
+            pytest.fail("Routine status must not fetch vectors")
+
+    index = StatusIndex()
 
     status = get_vector_store_status(
         settings=settings(),
-        pinecone_client=FakePinecone(index=StatusIndex()),
+        pinecone_client=FakePinecone(index=index),
     )
 
+    assert index.stats_calls == 1
     assert status.index_name == "docuverse"
     assert status.vector_count == 3
-    assert status.indexed_documents == 2
+    assert status.indexed_documents is None
 
 
 def s3_item(key, etag):

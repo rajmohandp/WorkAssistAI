@@ -192,53 +192,13 @@ def get_vector_store_status(
         client = pinecone_client or Pinecone(api_key=resolved_settings.api_key)
         description = client.describe_index(resolved_settings.index_name)
         index = client.Index(host=description.host)
-        namespace_kwargs = (
-            {"namespace": resolved_settings.namespace}
-            if resolved_settings.namespace
-            else {}
-        )
         stats = index.describe_index_stats()
         vector_count = int(stats.total_vector_count)
-
-        indexed_sources: set[str] = set()
-        indexed_documents: int | None = 0
-        try:
-            for id_batch in index.list(**namespace_kwargs):
-                response = index.fetch(ids=list(id_batch), **namespace_kwargs)
-                vectors = (
-                    response.vectors
-                    if hasattr(response, "vectors")
-                    else response["vectors"]
-                )
-                for vector in vectors.values():
-                    metadata = (
-                        vector.metadata
-                        if hasattr(vector, "metadata")
-                        else vector.get("metadata", {})
-                    )
-                    source = (
-                        metadata.get("s3_key")
-                        or metadata.get("filename")
-                        or metadata.get("source")
-                    )
-                    if source:
-                        indexed_sources.add(str(source))
-            indexed_documents = len(indexed_sources)
-        except Exception as exc:  # noqa: BLE001 - count is optional status data.
-            logger.warning(
-                "Could not count indexed Pinecone documents",
-                extra={
-                    "operation": "pinecone",
-                    "event": "document_count_failed",
-                    "error_type": type(exc).__name__,
-                },
-            )
-            indexed_documents = None
 
         return VectorStoreStatus(
             index_name=resolved_settings.index_name,
             vector_count=vector_count,
-            indexed_documents=indexed_documents,
+            indexed_documents=None,
         )
     except Exception as exc:
         logger.error(
