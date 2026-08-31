@@ -4,29 +4,35 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.concurrency import run_in_threadpool
 
+from app.agent.graph import execute_graph
+from app.agent.state import create_agent_state
 from app.api.schemas import (
     AskRequest,
     AskResponse,
     AskSourceResponse,
     ErrorResponse,
     EvaluationResponse,
+    HandoffRecordResponse,
+    HandoffResponse,
     HealthResponse,
     QueryRequest,
     QueryResponse,
     RepositoryStatusResponse,
     SyncResponse,
 )
-from app.services import rag_service as rag_service_module
+from app.core.security import AuthenticatedUser, get_current_user, require_admin
 from app.services.conversation_service import get_conversational_response
+from app.services.handoff_service import handoff_service
 from app.services.pinecone_service import PineconeService
 from app.services.rag_service import RagService
 from app.services.s3_service import S3Service
 from app.services.sync_service import SyncService
-from src.rag_chain import RAGError
+from src.rag_chain import RAGError, RAGResult
 from src.retriever import RetrievalError
 from src.s3_loader import S3RepositoryError
 from src.vector_store import VectorStoreError
@@ -54,7 +60,10 @@ async def health() -> HealthResponse:
     },
     tags=["rag"],
 )
-async def ask(request: AskRequest) -> AskResponse:
+async def ask(
+    request: AskRequest,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AskResponse:
     """Answer one question using the reusable, framework-neutral RAG service."""
 
     try:
@@ -76,24 +85,55 @@ async def ask(request: AskRequest) -> AskResponse:
             if request.document
             else {}
         )
-        result = await run_in_threadpool(
-            rag_service_module.ask_question,
+        graph_state = create_agent_state(
             request.question,
-            **service_kwargs,
+            user_id=current_user.employee_id,
+            username=current_user.username,
+            user_role=current_user.role,
+            metadata_filter=service_kwargs.get("metadata_filter"),
+            conversation_history=(
+                [message.model_dump() for message in request.history]
+                if request.history
+                else None
+            ),
         )
-        return AskResponse(
-            question=request.question,
-            answer=result.answer,
-            sources=[
+        graph_result = await execute_graph(graph_state)
+        result = graph_result["tool_result"]
+        sources = (
+            [
                 AskSourceResponse(
                     document=source.document_name,
                     page=source.page_number,
                 )
                 for source in result.sources_used
-            ],
-            evaluation=(
-                EvaluationResponse(**result.evaluation)
-                if result.evaluation
+            ]
+            if isinstance(result, RAGResult)
+            else []
+        )
+        evaluation = (
+            EvaluationResponse(**result.evaluation)
+            if isinstance(result, RAGResult) and result.evaluation
+            else None
+        )
+        return AskResponse(
+            question=request.question,
+            answer=graph_result["final_answer"] or "The request could not be completed.",
+            sources=sources,
+            evaluation=evaluation,
+            resolution=(
+                "escalated" if graph_result["escalation_required"] else "answered"
+            ),
+            handoff=(
+                HandoffResponse(
+                    handoff_id=graph_result["handoff_id"],
+                    status="queued",
+                    reason=(
+                        graph_result["escalation_reason"]
+                        or "insufficient_document_context"
+                    ),
+                )
+                if graph_result["escalation_required"]
+                and graph_result["handoff_id"]
                 else None
             ),
         )
@@ -108,7 +148,7 @@ async def ask(request: AskRequest) -> AskResponse:
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="DocuVerse could not complete the question.",
+            detail="WorkAssist AI could not complete the question.",
         ) from exc
     except Exception as exc:
         logger.exception(
@@ -131,7 +171,9 @@ async def ask(request: AskRequest) -> AskResponse:
     responses={503: {"model": ErrorResponse}},
     tags=["repository"],
 )
-async def repository_status() -> RepositoryStatusResponse:
+async def repository_status(
+    _current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> RepositoryStatusResponse:
     try:
         s3_status, pinecone_status = await asyncio.gather(
             run_in_threadpool(s3_service.status),
@@ -159,7 +201,9 @@ async def repository_status() -> RepositoryStatusResponse:
     responses={503: {"model": ErrorResponse}},
     tags=["repository"],
 )
-async def synchronize_repository() -> SyncResponse:
+async def synchronize_repository(
+    _current_admin: Annotated[AuthenticatedUser, Depends(require_admin)],
+) -> SyncResponse:
     """Incrementally synchronize the configured S3 bucket with Pinecone."""
 
     try:
@@ -177,6 +221,38 @@ async def synchronize_repository() -> SyncResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Document synchronization could not be completed.",
         ) from exc
+    except Exception as exc:
+        logger.exception(
+            "Unexpected repository synchronization failure",
+            extra={
+                "operation": "application",
+                "event": "api_repository_sync_unexpected_failure",
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Document synchronization could not connect to a required "
+                "repository provider. Check the API logs and network access."
+            ),
+        ) from exc
+
+
+@router.get(
+    "/handoffs",
+    response_model=list[HandoffRecordResponse],
+    tags=["human-support"],
+)
+async def list_handoffs(
+    _current_admin: Annotated[AuthenticatedUser, Depends(require_admin)],
+) -> list[HandoffRecordResponse]:
+    """List queued human-support cases for authenticated administrators."""
+
+    return [
+        HandoffRecordResponse(**record)
+        for record in handoff_service.list_handoffs()
+    ]
 
 
 @router.post(
@@ -185,7 +261,10 @@ async def synchronize_repository() -> SyncResponse:
     responses={503: {"model": ErrorResponse}},
     tags=["rag"],
 )
-async def query(request: QueryRequest) -> QueryResponse:
+async def query(
+    request: QueryRequest,
+    _current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> QueryResponse:
     try:
         return await run_in_threadpool(rag_service.answer, request)
     except (RAGError, RetrievalError, VectorStoreError, ValueError) as exc:
@@ -199,5 +278,5 @@ async def query(request: QueryRequest) -> QueryResponse:
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="DocuVerse could not complete the query.",
+            detail="WorkAssist AI could not complete the query.",
         ) from exc

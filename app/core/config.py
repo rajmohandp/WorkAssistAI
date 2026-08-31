@@ -11,7 +11,7 @@ from src.config import get_environment_settings
 class ApiSettings:
     """Non-secret API settings."""
 
-    title: str = "DocuVerse API"
+    title: str = "WorkAssist AI API"
     version: str = "1.0.0"
     api_prefix: str = "/api/v1"
 

@@ -7,11 +7,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
 class AskRequest(BaseModel):
     """Minimal validated request for a DocuVerse question."""
 
     question: str = Field(min_length=1, max_length=2000)
     document: str | None = Field(default=None, min_length=1, max_length=512)
+    history: list[ConversationMessage] = Field(default_factory=list, max_length=6)
 
     @field_validator("question")
     @classmethod
@@ -32,9 +38,22 @@ class AskRequest(BaseModel):
         return normalized
 
 
-class ConversationMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=4000)
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+
+
+class CurrentUserResponse(BaseModel):
+    username: str
+    employee_id: str
+    role: Literal["admin", "user"]
 
 
 class QueryFilter(BaseModel):
@@ -56,7 +75,6 @@ class QueryFilter(BaseModel):
 
 
 class QueryRequest(AskRequest):
-    history: list[ConversationMessage] = Field(default_factory=list, max_length=6)
     filters: QueryFilter | None = None
 
 
@@ -82,6 +100,19 @@ class EvaluationResponse(BaseModel):
     status: Literal["evaluated", "not_evaluated", "unavailable"]
 
 
+class HandoffResponse(BaseModel):
+    handoff_id: str
+    status: Literal["queued"]
+    reason: str
+
+
+class HandoffRecordResponse(HandoffResponse):
+    username: str
+    employee_id: str
+    question: str
+    created_at: str
+
+
 class AskResponse(BaseModel):
     """Minimal grounded answer contract."""
 
@@ -89,6 +120,8 @@ class AskResponse(BaseModel):
     answer: str = Field(min_length=1)
     sources: list[AskSourceResponse] = Field(default_factory=list)
     evaluation: EvaluationResponse | None = None
+    resolution: Literal["answered", "escalated"] = "answered"
+    handoff: HandoffResponse | None = None
 
 
 class QueryResponse(AskResponse):
@@ -132,7 +165,7 @@ class SyncResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["healthy"] = "healthy"
-    application: str = "DocuVerse"
+    application: str = "WorkAssist AI"
 
 
 class ErrorResponse(BaseModel):

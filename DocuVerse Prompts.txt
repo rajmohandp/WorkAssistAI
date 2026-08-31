@@ -1,6 +1,8 @@
 Original Prompt
 ---------------
-I want to build RAG system using Langchain based on the documents stored in Amazon S3 bucket, Provide me the prompts to create the application in incremental way, step by step, Use Pinecone for Vector database, Use RecursiveCharacterTextSplitter for Chunking, Application name : DocuVerse
+I want to build RAG system using Langchain based on the documents stored in Amazon S3 bucket, 
+Provide me the prompts to create the application in incremental way, step by step, Use Pinecone for Vector database, 
+Use RecursiveCharacterTextSplitter for Chunking, Application name : DocuVerse
 
 
 -------------------------
@@ -1030,5 +1032,534 @@ Foundation → S3 → Loading → Chunking → Embeddings → Pinecone → Retri
 The most important checkpoints are Prompt 4, Prompt 7, and Prompt 8. In particular, validate retrieval in Prompt 7 before connecting the LLM. If DocuVerse retrieves the wrong chunks, changing the LLM usually won't fix the underlying RAG problem.
 
 For a first usable MVP, you only need to complete Prompts 1–10. Prompts 11–18 move DocuVerse toward a much more production-ready internal document-search platform.
+
+------------------------------------------------------------------------------------------------
+
+Enhance the **DocuVerse** application so that simple greetings and conversational messages are handled appropriately instead of being sent directly to the RAG document-search pipeline.
+
+## Current Behavior
+
+Currently, when the user enters:
+
+`Hi`
+
+DocuVerse searches the document repository and responds:
+
+> I could not find enough information in the available documents to answer this question.
+
+This is not a good user experience because greetings do not require document retrieval.
+
+## Required Enhancement
+
+Before sending the user's query to the LangChain RAG pipeline, classify whether the input is:
+
+1. **Greeting / Welcome Message**
+2. **Conversational Message**
+3. **Document Question**
+
+### 1. Greeting Messages
+
+Recognize common greetings such as:
+
+* Hi
+* Hello
+* Hey
+* Good morning
+* Good afternoon
+* Good evening
+* Hi DocuVerse
+* Hello DocuVerse
+
+For these messages, DO NOT call Pinecone, the retriever, embeddings, or the LLM RAG chain.
+
+Return a friendly response such as:
+
+> Hello! 👋 Welcome to DocuVerse. I can help you find information from your organization's documents. What would you like to know?
+
+### 2. Conversational Messages
+
+Handle simple conversational inputs such as:
+
+* Thanks
+* Thank you
+* Okay
+* Got it
+* Bye
+* Goodbye
+* What can you do?
+* Help
+
+Examples:
+
+**User:** Thanks
+**DocuVerse:** You're welcome! Let me know if you'd like to search for anything else in your documents.
+
+**User:** What can you do?
+**DocuVerse:** I can search your organization's documents and answer questions based on the information available in them. Ask me a question about the documents to get started.
+
+**User:** Help
+**DocuVerse:** Ask me a question about the information stored in your organization's documents. I'll search the relevant content and provide a grounded answer.
+
+**User:** Bye
+**DocuVerse:** Goodbye! 👋 Come back anytime you need help searching your documents.
+
+### 3. Document Questions
+
+Questions such as:
+
+* What is the vacation policy?
+* How many sick days are available?
+* Explain the company's training reimbursement policy.
+* What does the employee handbook say about remote work?
+
+should continue through the existing RAG workflow:
+
+`User Question`
+→ `FastAPI`
+→ `LangChain`
+→ `Embedding`
+→ `Pinecone Retriever`
+→ `Relevant Chunks`
+→ `LLM`
+→ `Grounded Answer`
+
+Do not change the existing RAG implementation.
+
+## Implementation
+
+Create a lightweight intent-handling layer before the RAG pipeline.
+
+Suggested flow:
+
+```text
+User Message
+     ↓
+Message / Intent Handler
+     ↓
+ ┌───────────────┬────────────────────┐
+ ↓               ↓                    ↓
+Greeting     Conversation       Document Question
+ ↓               ↓                    ↓
+Static       Static/Template       RAG Pipeline
+Response       Response                ↓
+                                  Pinecone + LLM
+```
+
+Create a function similar to:
+
+```python
+def get_conversational_response(message: str) -> str | None:
+    """
+    Detect simple greetings and conversational messages.
+
+    Returns:
+        str  -> if the message can be handled without RAG
+        None -> if the message should continue to the RAG pipeline
+    """
+```
+
+Then integrate it before document retrieval:
+
+```python
+response = get_conversational_response(user_message)
+
+if response:
+    return response
+
+return rag_service.answer_question(user_message)
+```
+
+Keep this logic separate from the RAG service so that the architecture remains modular.
+
+Suggested structure:
+
+```text
+app/
+├── api/
+├── services/
+│   ├── conversation_service.py
+│   ├── rag_service.py
+│   ├── retrieval_service.py
+│   └── embedding_service.py
+```
+
+Put greeting/conversation detection inside `conversation_service.py`.
+
+## Important Requirements
+
+* Do not perform vector search for greetings.
+* Do not create embeddings for greetings.
+* Do not call Pinecone for greetings.
+* Do not call the LLM unnecessarily for basic conversational messages.
+* Keep the solution lightweight; simple normalized string/regex matching is sufficient for this stage.
+* Matching should be case-insensitive.
+* Trim whitespace and punctuation before matching.
+* Do not accidentally classify document questions containing greeting words as greetings.
+
+For example:
+
+`Hi, what is our vacation policy?`
+
+must be treated as a **document question**, not just a greeting.
+
+It should therefore go through the RAG pipeline.
+
+## UI Behavior
+
+Keep the existing Streamlit chat interface.
+
+Example:
+
+**User:** Hi
+
+**DocuVerse:**
+Hello! 👋 Welcome to DocuVerse. I can help you find information from your organization's documents. What would you like to know?
+
+**User:** What is the vacation policy?
+
+**DocuVerse:**
+Send the question through the existing RAG pipeline and display the document-grounded answer.
+
+Implement this enhancement without breaking the existing Streamlit → FastAPI → LangChain → Pinecone architecture.
+
+------------------------------------------------------------------------------------------------
+
+Enhance the existing **DocuVerse** application by adding **Role-Based Access Control (RBAC)** with username/password authentication.
+
+The application already has existing functionality. **Do not modify, remove, refactor, or break any existing DocuVerse functionality unless it is strictly required to add authentication and RBAC.** Keep the change isolated and minimal.
+
+### 1. Add User Authentication
+
+Add a login page before users can access the DocuVerse application.
+
+The login page should contain:
+
+* **Username**
+* **Password**
+* **Login** button
+* Clear error message for invalid credentials
+
+Do not display the password as plain text while the user types it.
+
+### 2. Create Two Initial Users
+
+For this initial implementation, configure these users:
+
+| Username | Password     | Role    |
+| -------- | ------------ | ------- |
+| `admin`  | `welcome123` | `admin` |
+| `user01` | `welcome123` | `user`  |
+
+The role should automatically be determined after successful authentication.
+
+Do **not** allow the user to select their role from the login page.
+
+### 3. RBAC Behavior
+
+After login:
+
+**admin**
+
+* Automatically enters the application in **Admin Mode**
+* Role = `admin`
+* Retain access to all existing application functionality
+* Any functionality that is currently considered administrative should remain available
+
+**user01**
+
+* Automatically enters the application in **User Mode**
+* Role = `user`
+* Retain access to normal DocuVerse document search, RAG, question-answering, and other existing user functionality
+* Administrative functionality should not be accessible
+
+### 4. Session Management
+
+Use session-based authentication.
+
+For Streamlit, use `st.session_state` to maintain:
+
+```python
+authenticated
+username
+role
+```
+
+Example:
+
+```python
+st.session_state.authenticated = True
+st.session_state.username = "admin"
+st.session_state.role = "admin"
+```
+
+Authentication should persist while the user navigates through the application during the same session.
+
+If the application contains a **FastAPI layer**, keep the architecture compatible with eventually moving authentication and authorization into FastAPI. However, do not redesign the existing architecture solely for this enhancement.
+
+### 5. Authorization
+
+Create reusable role-checking logic instead of placing username comparisons throughout the application.
+
+For example:
+
+```python
+def is_admin():
+    return (
+        st.session_state.get("authenticated", False)
+        and st.session_state.get("role") == "admin"
+    )
+```
+
+or:
+
+```python
+def has_role(required_role):
+    return (
+        st.session_state.get("authenticated", False)
+        and st.session_state.get("role") == required_role
+    )
+```
+
+Use **roles**, not usernames, when deciding whether a feature can be accessed.
+
+Do not implement logic such as:
+
+```python
+if username == "admin":
+```
+
+throughout the application.
+
+### 6. Logout
+
+Add a **Logout** option after successful login.
+
+Preferably display something similar in the Streamlit sidebar:
+
+```text
+Logged in as: admin
+Role: Admin
+
+[Logout]
+```
+
+When Logout is clicked:
+
+* Clear authentication-related session state
+* Return the user to the login page
+* Do not retain the previous user's role
+
+### 7. Security
+
+Do not scatter usernames and passwords throughout the source code.
+
+For this prototype, keep authentication configuration centralized in one module, for example:
+
+```text
+auth.py
+```
+
+Structure it so that later the application can easily migrate to:
+
+* Environment variables
+* `.env`
+* AWS Secrets Manager
+* Amazon Cognito
+* Database-based users
+* OAuth / SSO
+
+If possible, hash passwords instead of comparing plain-text passwords directly.
+
+**Never log passwords.**
+
+Do not expose credentials through error messages, logs, UI messages, API responses, or debugging output.
+
+### 8. Suggested Structure
+
+Keep authentication separate from the existing RAG functionality.
+
+A structure similar to this is preferred:
+
+```text
+DocuVerse/
+│
+├── app.py
+├── auth.py
+│
+├── api/
+│   └── ...
+│
+├── rag/
+│   ├── retrieval.py
+│   ├── ingestion.py
+│   └── ...
+│
+├── services/
+│   └── ...
+│
+└── ...
+```
+
+`auth.py` should handle responsibilities such as:
+
+```python
+authenticate_user()
+login()
+logout()
+is_authenticated()
+has_role()
+is_admin()
+```
+
+Do not move existing RAG code into `auth.py`.
+
+### 9. Application Flow
+
+The expected flow should be:
+
+```text
+User opens DocuVerse
+        │
+        ▼
+     Login Page
+        │
+        ▼
+Validate Username + Password
+        │
+   ┌────┴─────┐
+   │          │
+Invalid     Valid
+   │          │
+   ▼          ▼
+Show Error   Identify Role
+              │
+        ┌─────┴─────┐
+        │           │
+      admin       user01
+        │           │
+        ▼           ▼
+   Admin Mode    User Mode
+```
+
+Unauthenticated users must not be able to access the main DocuVerse interface.
+
+### 10. Important Regression Requirement
+
+This is the **highest-priority requirement**:
+
+> Add authentication and RBAC without affecting existing DocuVerse functionality.
+
+Before making changes:
+
+1. Review the existing application structure.
+2. Identify the minimum files that need modification.
+3. Preserve the existing Streamlit UI, FastAPI integration, LangChain RAG workflow, Pinecone integration, Amazon S3 integration, document retrieval, chat functionality, and existing configuration.
+4. Do not rename existing functions, APIs, routes, modules, environment variables, or configuration values unless absolutely necessary.
+5. Do not change the existing RAG prompts.
+6. Do not change chunking, embeddings, retrieval, or vector database behavior.
+7. Do not change existing API request/response formats.
+8. Do not make unrelated code cleanup or refactoring.
+9. Add authentication as a wrapper/gate around the existing application wherever possible.
+
+### 11. Implementation Approach
+
+Implement this incrementally.
+
+**Step 1:** Analyze the existing DocuVerse project and identify the current entry point and application flow.
+
+**Step 2:** Create the authentication/RBAC module.
+
+**Step 3:** Add the two initial users and roles.
+
+**Step 4:** Add the Streamlit login page.
+
+**Step 5:** Protect the existing application so it loads only after authentication.
+
+**Step 6:** Add role-based authorization for Admin Mode vs User Mode.
+
+**Step 7:** Add Logout.
+
+**Step 8:** Test both accounts.
+
+Test:
+
+```text
+admin / welcome123
+```
+
+Expected:
+
+```text
+Login successful
+Role = admin
+Admin Mode
+```
+
+Test:
+
+```text
+user01 / welcome123
+```
+
+Expected:
+
+```text
+Login successful
+Role = user
+User Mode
+```
+
+Also test:
+
+```text
+wrong username / wrong password
+```
+
+Expected:
+
+```text
+Login rejected
+No access to DocuVerse
+```
+
+### 12. Regression Testing
+
+After implementing RBAC, verify that existing functionality works exactly as before for an authorized user.
+
+Specifically test:
+
+* Application startup
+* Streamlit → FastAPI communication, if currently implemented
+* S3 document access
+* Document ingestion
+* RecursiveCharacterTextSplitter chunking
+* Embedding generation
+* Pinecone operations
+* LangChain retrieval
+* RAG question answering
+* Chat history
+* Source/citation display
+* Existing navigation
+* Existing configuration
+* Error handling
+
+Do not consider the task complete if authentication works but an existing feature has been broken.
+
+### 13. Output
+
+After implementation, provide:
+
+1. Files created
+2. Files modified
+3. Brief explanation of the authentication flow
+4. Brief explanation of RBAC
+5. Any new Python dependencies
+6. Commands required to install new dependencies
+7. Test results for `admin`
+8. Test results for `user01`
+9. Invalid-login test result
+10. Confirmation that existing DocuVerse functionality was regression-tested
+
+**Do not implement additional features beyond authentication, RBAC, session handling, and logout.**
 
 ------------------------------------------------------------------------------------------------

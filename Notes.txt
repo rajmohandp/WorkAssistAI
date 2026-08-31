@@ -1,0 +1,38 @@
+& .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+
+& .\.venv\Scripts\python.exe -m streamlit run streamlit_app.py
+
+----------------------------------------------------------------
+
+uv run uvicorn app.main:app --reload
+
+python -m uvicorn app.main:app --reload
+
+uv run streamlit run streamlit_app.py
+
+http://127.0.0.1:8000/health
+
+
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/ask" `
+  -ContentType "application/json" `
+  -Body '{"question":"What are the employee vacation policies?"}'
+  
+DOCUVERSE_API_URL=http://localhost:8000
+
+https://www.loom.com/share/d3cfc88d27614347aabeec14b230c52e
+
+https://docs.google.com/document/d/1eozFLrq8FwnEvOp58UQUVuBUUu8mcAhK/edit?usp=drive_link&ouid=114514752749794489712&rtpof=true&sd=true
+
+
+---From others
+https://www.loom.com/share/5fa6c93206264b309fb602786b3c1cef
+
+https://github.com/judy-eapen/aviation-incident-analyzer
+
+https://notebook.google.com/notebook/f51be735-4689-491c-82c1-b486a0d3a568
+
+https://www.aboutamazon.com/news/workplace/amazon-svp-ai-tools-employees-careers
+
+---------------------------------------------------------------------------------

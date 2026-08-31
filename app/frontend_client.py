@@ -26,25 +26,88 @@ def _safe_error_detail(response: requests.Response) -> str:
     return detail if isinstance(detail, str) else "The request could not be completed."
 
 
-def get_repository_status(*, timeout: float = 10) -> dict[str, Any]:
+def _authorization_headers(access_token: str) -> dict[str, str]:
+    if not access_token:
+        raise DocuVerseAPIError("Authentication is required.")
+    return {"Authorization": f"Bearer {access_token}"}
+
+
+def login_http(username: str, password: str, *, timeout: float = 10) -> dict[str, Any]:
+    """Authenticate with FastAPI and return a backend-issued access token."""
+
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/api/v1/auth/login",
+            json={"username": username, "password": password},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise DocuVerseAPIError("The WorkAssist AI API is unavailable.") from exc
+    payload = _read_json_response(response)
+    if not isinstance(payload.get("access_token"), str):
+        raise DocuVerseAPIError("The API returned an invalid authentication response.")
+    return payload
+
+
+def get_current_user_http(access_token: str, *, timeout: float = 10) -> dict[str, Any]:
+    """Return identity established by the backend token."""
+
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/api/v1/auth/me",
+            headers=_authorization_headers(access_token),
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise DocuVerseAPIError("The WorkAssist AI API is unavailable.") from exc
+    return _read_json_response(response)
+
+
+def get_repository_status(access_token: str, *, timeout: float = 10) -> dict[str, Any]:
     """Read repository status from FastAPI."""
 
     try:
         response = requests.get(
             f"{API_BASE_URL}/api/v1/repository/status",
+            headers=_authorization_headers(access_token),
             timeout=timeout,
         )
     except requests.RequestException as exc:
-        raise DocuVerseAPIError("The DocuVerse API is unavailable.") from exc
+        raise DocuVerseAPIError("The WorkAssist AI API is unavailable.") from exc
     return _read_json_response(response)
 
 
-def synchronize_repository(*, timeout: float = 600) -> dict[str, Any]:
+def get_handoffs_http(access_token: str, *, timeout: float = 10) -> list[dict[str, Any]]:
+    """Return the authenticated administrator's human-support queue."""
+
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/api/v1/handoffs",
+            headers=_authorization_headers(access_token),
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise DocuVerseAPIError("The human-support queue is unavailable.") from exc
+    if not response.ok:
+        raise DocuVerseAPIError(_safe_error_detail(response))
+    try:
+        payload = response.json()
+    except (requests.exceptions.JSONDecodeError, ValueError) as exc:
+        raise DocuVerseAPIError("The API returned an invalid response.") from exc
+    if not isinstance(payload, list) or not all(
+        isinstance(item, dict) for item in payload
+    ):
+        raise DocuVerseAPIError("The API returned an invalid handoff queue.")
+    return payload
+
+
+def synchronize_repository(access_token: str, *, timeout: float = 600) -> dict[str, Any]:
     """Request incremental S3-to-Pinecone synchronization from FastAPI."""
 
     try:
         response = requests.post(
             f"{API_BASE_URL}/api/v1/repository/sync",
+            headers=_authorization_headers(access_token),
             timeout=timeout,
         )
     except requests.Timeout as exc:
@@ -53,10 +116,18 @@ def synchronize_repository(*, timeout: float = 600) -> dict[str, Any]:
         ) from exc
     except requests.ConnectionError as exc:
         raise DocuVerseAPIError(
-            "Cannot connect to the DocuVerse API. Confirm FastAPI is running."
+            "Cannot connect to the WorkAssist AI API. Confirm FastAPI is running."
         ) from exc
     except requests.RequestException as exc:
         raise DocuVerseAPIError("Document synchronization could not be started.") from exc
+    if not response.ok:
+        detail = _safe_error_detail(response)
+        if detail == "The request could not be completed.":
+            detail = (
+                "Document synchronization failed. Check FastAPI provider and "
+                "network logs."
+            )
+        raise DocuVerseAPIError(detail)
     return _read_json_response(response)
 
 
@@ -64,6 +135,8 @@ def ask_question_http(
     question: str,
     *,
     document: str | None = None,
+    access_token: str,
+    history: list[dict[str, str]] | None = None,
     timeout: float = 60,
 ) -> dict[str, Any]:
     """Submit a question to FastAPI and return its validated JSON response."""
@@ -71,19 +144,25 @@ def ask_question_http(
     request_payload = {"question": question}
     if document:
         request_payload["document"] = document
+    if history:
+        request_payload["history"] = [
+            {"role": message["role"], "content": message["content"]}
+            for message in history[-6:]
+        ]
     try:
         response = requests.post(
             f"{API_BASE_URL}/ask",
+            headers=_authorization_headers(access_token),
             json=request_payload,
             timeout=timeout,
         )
     except requests.Timeout as exc:
         raise DocuVerseAPIError(
-            "DocuVerse took too long to respond. Please try again."
+            "WorkAssist AI took too long to respond. Please try again."
         ) from exc
     except requests.ConnectionError as exc:
         raise DocuVerseAPIError(
-            "Cannot connect to the DocuVerse API. Confirm FastAPI is running."
+            "Cannot connect to the WorkAssist AI API. Confirm FastAPI is running."
         ) from exc
     except requests.RequestException as exc:
         raise DocuVerseAPIError("The question could not be sent.") from exc

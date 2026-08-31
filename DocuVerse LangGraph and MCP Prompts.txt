@@ -1,0 +1,301 @@
+Prompt 1 — Review the existing project
+
+Review my existing DocuVerse project before changing any code.
+
+The application currently uses:
+
+- Streamlit for the UI
+- FastAPI for the backend
+- LangChain for RAG
+- Pinecone for vector search
+- Amazon S3 for document storage
+- OpenAI as the LLM
+- Role-based access with admin and user roles
+
+My enhancement goal is:
+
+1. Introduce LangGraph for request routing and orchestration.
+2. Route employee PTO questions to an AWS RDS MySQL database.
+3. Continue routing document questions to the existing Pinecone RAG workflow.
+4. Later expose selected functionality through MCP.
+5. Preserve all existing functionality.
+
+For this step, do not modify any files.
+
+Inspect the repository and provide:
+
+- Current architecture and request flow
+- Relevant files and functions
+- Current FastAPI chat endpoint
+- Current RAG retrieval function
+- Current authentication/user model
+- Current dependency-management approach
+- Proposed files to add or modify
+- Risks or compatibility concerns
+- A concise implementation plan
+
+Do not display secret values from environment files.
+
+---------------------------------------------------------------------------------
+
+Prompt 2 — Add LangGraph dependencies and state
+
+Implement the first LangGraph enhancement in DocuVerse.
+
+Requirements:
+
+1. Add compatible LangGraph dependencies using the project’s existing dependency-management approach.
+2. Do not upgrade unrelated packages.
+3. Create a new agent package if one does not already exist:
+
+backend/
+  agent/
+    __init__.py
+    state.py
+    graph.py
+    nodes.py
+    router.py
+
+Adapt the paths to the existing project structure.
+
+Create a typed LangGraph state containing fields similar to:
+
+- messages
+- user_id
+- username
+- user_role
+- question
+- intent
+- data_source
+- tool_name
+- tool_result
+- retrieved_documents
+- final_answer
+- error
+
+Create an initial StateGraph with:
+
+START -> classify_request -> existing_rag -> generate_response -> END
+
+At this stage, all questions can still use the existing RAG workflow.
+
+Important:
+
+- Reuse the existing RAG implementation; do not duplicate it.
+- Do not change the Streamlit user experience.
+- Do not remove the existing FastAPI endpoint.
+- Keep the graph implementation asynchronous if the existing API is asynchronous.
+- Add structured logging around graph execution.
+- Add focused unit tests for state creation and graph compilation.
+
+After implementation:
+
+- Run the relevant tests.
+- Report changed files.
+- Explain the request flow.
+- Stop after completing this step.
+
+---------------------------------------------------------------------------------
+Prompt 3 — Configure the AWS MySQL connection
+
+Add a secure AWS RDS MySQL connection to DocuVerse.
+
+The database contains this table:
+
+employee_pto_balances
+
+Columns:
+
+- pto_balance_id
+- employee_id
+- employee_name
+- pto_type
+- balance_year
+- opening_balance
+- accrued_hours
+- used_hours
+- pending_hours
+- adjusted_hours
+- available_hours
+- last_updated
+
+Requirements:
+
+1. Use SQLAlchemy with the MySQL driver most compatible with the existing project.
+2. Use connection pooling and pool_pre_ping.
+3. Read database configuration only from environment variables:
+
+DB_HOST
+DB_PORT
+DB_NAME
+DB_USER
+DB_PASSWORD
+
+4. Do not hardcode credentials.
+5. Do not print passwords or complete connection strings in logs.
+6. Add the required variable names to .env.example.
+7. Preserve the user’s existing .env file.
+8. Create a database session dependency.
+9. Add a health-check function that executes SELECT 1.
+10. Add a FastAPI database health endpoint accessible only to an admin if that fits the existing authentication design.
+
+Use a read-only application database user whenever possible.
+
+Do not implement PTO querying yet.
+
+Run tests using mocks if the real AWS database is unavailable. Report the exact command I can use to verify the AWS connection locally.
+
+---------------------------------------------------------------------------------
+
+Prompt 4 — Create the PTO repository
+
+Implement a repository layer for reading employee PTO balances from MySQL.
+
+Create a function similar to:
+
+get_current_pto_balance(
+    employee_id: str,
+    pto_type: str | None = None,
+    balance_year: int | None = None
+)
+
+Requirements:
+
+1. Use SQLAlchemy parameterized queries or ORM queries.
+2. Never build SQL by concatenating user input.
+3. Default balance_year to the current year.
+4. Return all PTO types if pto_type is not specified.
+5. Normalize PTO types safely:
+   - vacation
+   - sick
+   - personal
+   - floating holiday
+   - other
+6. Return a typed application object, not a raw database cursor.
+7. Return a clear not-found result when no records exist.
+8. Keep this repository strictly read-only.
+9. Do not give the LLM unrestricted text-to-SQL capability.
+10. Add unit tests covering:
+    - Employee with vacation and sick balances
+    - Specific PTO type
+    - Missing employee
+    - Invalid PTO type
+    - Current-year default
+    - Database exception
+
+Do not connect the repository to LangGraph in this step.
+
+---------------------------------------------------------------------------------
+
+Prompt 5 — Create the PTO tool
+Create a LangChain-compatible tool named get_current_pto_balance that uses the PTO repository.
+
+The tool input must have a typed schema containing:
+
+- employee_id
+- pto_type: optional
+- balance_year: optional
+
+The tool description should clearly tell the LLM:
+
+"Use this tool only for questions about an employee’s current PTO, vacation, sick, personal leave, floating-holiday, accrued, used, pending, or available leave balance."
+
+The tool must return structured data containing:
+
+- employee_id
+- employee_name
+- balance_year
+- balances
+- last_updated
+- source = "aws_mysql"
+
+For every PTO category, return:
+
+- pto_type
+- opening_balance
+- accrued_hours
+- used_hours
+- pending_hours
+- adjusted_hours
+- available_hours
+
+Requirements:
+
+1. Do not expose database credentials or internal exceptions.
+2. Do not allow arbitrary SQL.
+3. Add focused unit tests.
+4. Do not connect the tool to LangGraph yet.
+5. Include examples of tool input and output in the implementation explanation.
+
+---------------------------------------------------------------------------------
+
+Prompt 6 — Route PTO questions to MySQL
+
+Enhance the LangGraph workflow so PTO questions use AWS MySQL instead of Pinecone/PDF retrieval.
+
+Implement these graph nodes:
+
+1. classify_request
+2. resolve_employee
+3. query_pto_database
+4. retrieve_documents
+5. generate_response
+6. handle_error
+
+Required routing:
+
+START -> classify_request
+
+If intent == "pto_balance":
+    resolve_employee -> query_pto_database -> generate_response -> END
+
+If intent == "document_question":
+    retrieve_documents -> generate_response -> END
+
+If classification fails:
+    handle_error -> END
+
+PTO intent includes questions containing concepts such as:
+
+- PTO balance
+- current PTO
+- vacation balance
+- sick balance
+- sick hours
+- personal leave
+- available leave
+- accrued PTO
+- used PTO
+- pending PTO
+- remaining time off
+- floating holiday
+
+Requirements:
+
+1. Use a typed intent value, not unvalidated free text.
+2. Use structured model output for classification if appropriate.
+3. Add a deterministic PTO keyword guard before or alongside LLM classification.
+4. The PTO route must never call Pinecone.
+5. The document route must continue using the existing RAG implementation.
+6. Set state.data_source to:
+   - "aws_mysql" for PTO
+   - "pinecone" for document RAG
+7. Record the selected route and tool in structured logs.
+8. Do not expose internal routing details in the user answer.
+9. Responses from the PTO route must state the balance year and last-updated time when available.
+10. Do not let users query another employee unless authorized.
+
+Add tests proving:
+
+- "What is my current PTO balance?" calls the database and does not call Pinecone.
+- "How many sick hours do I have?" calls the database.
+- "What is EMP001's vacation balance?" calls the database when an admin asks.
+- The same EMP001 question is rejected when an unauthorized user asks.
+- "What does the employee handbook say about PTO?" uses Pinecone because it asks about policy, not a personal balance.
+- "Summarize the uploaded benefits PDF" uses Pinecone.
+- Database failure returns a safe error.
+- Unknown intent does not execute both data sources.
+
+Run all relevant tests and stop after reporting the results.
+
+---------------------------------------------------------------------------------

@@ -42,8 +42,10 @@ def test_legacy_environment_aliases_remain_supported(monkeypatch):
 
 def test_secret_values_are_redacted_in_settings_representation(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-appear")
+    monkeypatch.setenv("DB_PASSWORD", "database-secret")
 
     representation = repr(EnvironmentSettings(_env_file=None))
 
     assert "must-not-appear" not in representation
+    assert "database-secret" not in representation
     assert "**********" in representation

@@ -22,8 +22,8 @@ from app.services.conversation_service import (
         "Good morning",
         "Good afternoon.",
         "Good evening",
-        "Hi DocuVerse",
-        "Hello, DocuVerse!",
+        "Hi WorkAssist AI",
+        "Hello, WorkAssist AI!",
     ],
 )
 def test_greetings_are_handled_without_rag(message):

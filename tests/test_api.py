@@ -1,5 +1,9 @@
 """Tests for the modular DocuVerse FastAPI backend."""
 
+import os
+
+os.environ.setdefault("AUTH_TOKEN_SECRET", "test-only-authentication-secret-value")
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -19,6 +23,13 @@ from app.services.rag_service import ask_question
 from src.rag_chain import INSUFFICIENT_CONTEXT_MESSAGE, RAGResult
 
 client = TestClient(app)
+login_response = client.post(
+    "/api/v1/auth/login",
+    json={"username": "admin", "password": "welcome123"},
+)
+client.headers["Authorization"] = (
+    f"Bearer {login_response.json()['access_token']}"
+)
 
 
 def test_health_endpoint():
@@ -27,7 +38,7 @@ def test_health_endpoint():
     assert response.status_code == 200
     assert response.json() == {
         "status": "healthy",
-        "application": "DocuVerse",
+        "application": "WorkAssist AI",
     }
 
 
@@ -92,6 +103,24 @@ def test_repository_sync_endpoint_uses_backend_service(monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == expected.model_dump()
+
+
+def test_repository_sync_sanitizes_unexpected_provider_failure(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.sync_service.synchronize",
+        lambda: (_ for _ in ()).throw(PermissionError("socket access denied")),
+    )
+
+    response = client.post("/api/v1/repository/sync")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "Document synchronization could not connect to a required "
+            "repository provider. Check the API logs and network access."
+        )
+    }
+    assert "socket access denied" not in response.text
 
 
 def test_query_endpoint_uses_rag_service(monkeypatch):
@@ -176,6 +205,7 @@ def test_ask_endpoint_calls_reusable_rag_service(monkeypatch):
             "[employee_handbook.pdf, Page 12]"
         ),
         "sources": [{"document": "employee_handbook.pdf", "page": 12}],
+        "resolution": "answered",
     }
 
 
@@ -194,7 +224,7 @@ def test_ask_endpoint_handles_greeting_without_rag(monkeypatch):
         fail_if_called,
     )
 
-    response = client.post("/ask", json={"question": "  Hello, DocuVerse!  "})
+    response = client.post("/ask", json={"question": "  Hello, WorkAssist AI!  "})
 
     assert response.status_code == 200
     assert response.json()["answer"].startswith("Hello! 👋")
@@ -267,7 +297,7 @@ def test_ask_endpoint_returns_sanitized_service_error(monkeypatch):
 
     assert response.status_code == 503
     assert response.json() == {
-        "detail": "DocuVerse could not complete the question."
+        "detail": "WorkAssist AI could not complete the question."
     }
     assert "sensitive technical detail" not in response.text
 
@@ -288,6 +318,8 @@ def test_ask_response_defaults_to_empty_sources():
         "answer": "Answer",
         "sources": [],
         "evaluation": None,
+        "resolution": "answered",
+        "handoff": None,
     }
 
 
@@ -334,7 +366,9 @@ def test_reusable_rag_service_runs_framework_neutral_pipeline(monkeypatch):
         dependencies=dependencies,
     )
 
-    assert result is expected
+    assert result.answer == expected.answer
+    assert result.retrieval_query == expected.retrieval_query
+    assert result.retrieved_documents == expected.retrieved_documents
     assert captured == {
         "question": "What is the retention policy?",
         "top_k": 3,

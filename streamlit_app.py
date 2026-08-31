@@ -1,4 +1,4 @@
-"""Compatibility entry point for the existing DocuVerse Streamlit UI.
+"""Compatibility entry point for the WorkAssist AI Streamlit UI.
 
 The mature UI remains in ``app.py`` while the new ``app`` package hosts the
 FastAPI backend. Run this file to use the recommended frontend entry point.

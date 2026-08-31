@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 
+from app.api.auth_routes import router as auth_router
 from app.api.routes import ask, health, router
 from app.api.schemas import AskResponse, HealthResponse
 from app.core.config import get_api_settings
@@ -18,9 +19,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.title,
     version=settings.version,
-    description="HTTP API for grounded search across DocuVerse documents.",
+    description="HTTP API for agentic employee support, PTO, and grounded search.",
 )
 app.include_router(router, prefix=settings.api_prefix)
+app.include_router(auth_router, prefix=settings.api_prefix)
 
 
 @app.middleware("http")

@@ -1,8 +1,8 @@
-# DocuVerse
+# WorkAssist AI
 
-> Intelligent Search Across Your Documents
+> Agentic Employee Support and PTO Assistant
 
-DocuVerse is an enterprise-style Retrieval-Augmented Generation (RAG) application for searching organizational documents stored in Amazon S3. It loads supported files, creates deterministic text chunks, stores OpenAI embeddings in Pinecone, retrieves relevant evidence, and generates grounded answers with source citations through a Streamlit chat interface.
+WorkAssist AI is an agentic employee-support application for PTO balance assistance and retrieval-augmented search across organizational documents stored in Amazon S3. It routes personal PTO questions to AWS MySQL and document questions to Pinecone-backed RAG, then presents answers through a Streamlit chat interface.
 
 The application also includes administrative synchronization, metadata-aware search, conversational follow-up handling, RAG guardrails, and structured production logging.
 
@@ -10,7 +10,7 @@ The application also includes administrative synchronization, metadata-aware sea
 
 Important organizational knowledge is frequently distributed across policies, handbooks, reports, and other files. Finding an answer manually can require opening several documents and searching each independently. A general-purpose LLM may respond quickly, but it cannot be trusted to know private documents and may fabricate unsupported details.
 
-DocuVerse solves this problem by:
+WorkAssist AI solves this problem by:
 
 - using Amazon S3 as the source-of-truth document repository;
 - indexing document content in Pinecone for semantic search;
@@ -51,7 +51,7 @@ DocuVerse solves this problem by:
 
 ## Architecture
 
-DocuVerse has two separate runtime paths: administrative ingestion synchronizes S3 into Pinecone, while the conversational query path retrieves evidence and generates grounded answers.
+WorkAssist AI has separate orchestration paths for administrative ingestion, employee PTO assistance, and grounded document questions.
 
 ```mermaid
 flowchart TB
@@ -85,7 +85,7 @@ flowchart TB
         Prompt[Grounded RAG prompt<br/>context + current question]
         LLM[Configurable chat LLM]
         Citations[Citation allowlist and consolidation]
-        UI[DocuVerse Streamlit UI<br/>answer + Sources Used]
+        UI[WorkAssist AI Streamlit UI<br/>answer + Sources Used]
 
         User --> Rewrite
         History --> Rewrite
@@ -162,13 +162,13 @@ uv --version
 
 Create an S3 bucket using a lowercase, globally unique name. Upload PDF, TXT, or DOCX files; unsupported object types are ignored.
 
-The AWS principal used by DocuVerse should have only the permissions it needs:
+The AWS principal used by WorkAssist AI should have only the permissions it needs:
 
 - `s3:ListBucket` on the configured bucket;
 - `s3:GetObject` for supported documents; and
 - access to all prefixes that should be indexed.
 
-DocuVerse uses Boto3's standard AWS credential chain. Local access-key variables are supported, but AWS profiles, workload credentials, and IAM roles are preferred where available.
+WorkAssist AI uses Boto3's standard AWS credential chain. Local access-key variables are supported, but AWS profiles, workload credentials, and IAM roles are preferred where available.
 
 ```dotenv
 S3_BUCKET_NAME=your-lowercase-bucket-name
@@ -186,7 +186,7 @@ Current defaults:
 - recommended metric: cosine; and
 - optional namespace configured with `PINECONE_NAMESPACE`.
 
-DocuVerse connects to the existing index and validates its dimension before indexing or retrieval. If an index has a different dimension, create a compatible index or deliberately change `OPENAI_EMBEDDING_DIMENSIONS` and reindex everything. Do not mix vectors created with different embedding configurations.
+WorkAssist AI connects to the existing index and validates its dimension before indexing or retrieval. If an index has a different dimension, create a compatible index or deliberately change `OPENAI_EMBEDDING_DIMENSIONS` and reindex everything. Do not mix vectors created with different embedding configurations.
 
 ## Environment variables
 
@@ -225,6 +225,11 @@ RETRIEVAL_MIN_SCORE=0.3
 
 # Streamlit-to-FastAPI connection
 FASTAPI_URL=http://localhost:8000
+
+# Backend-issued signed access tokens
+# Generate a unique random secret of at least 32 characters; never commit it.
+AUTH_TOKEN_SECRET=replace-with-a-long-random-secret
+AUTH_TOKEN_TTL_SECONDS=1800
 
 # DEBUG, INFO, WARNING, or ERROR
 LOG_LEVEL=INFO
@@ -299,7 +304,7 @@ Pinecone retrieval, grounded generation, guardrails, and citations.
 
 ## Document ingestion process
 
-In **Admin**, select **Sync Documents**. DocuVerse then:
+In **Admin**, select **Sync Documents**. WorkAssist AI then:
 
 1. Lists supported S3 objects.
 2. Reads key, ETag, last-modified timestamp, and size.
@@ -356,7 +361,7 @@ page, page_number, chunk_id, chunk_index
 
 ## Retrieval process
 
-For each question, DocuVerse:
+For each question, WorkAssist AI:
 
 1. Validates input.
 2. Rewrites a follow-up into a standalone query when bounded history exists.
@@ -395,7 +400,7 @@ Retrieved context + current question + intent-only history
 
 History is bounded by message count and characters. It resolves references such as "it" but is not factual evidence. Retrieved documents remain the only evidence.
 
-If no confident evidence remains, the LLM is not called and DocuVerse returns:
+If no confident evidence remains, the LLM is not called and WorkAssist AI returns:
 
 > I could not find enough information in the available documents to answer this question.
 
@@ -408,7 +413,7 @@ Each chunk retains source metadata. The LLM receives an exact citation allowlist
 [Financial_Policy.docx]
 ```
 
-DocuVerse removes invented labels, ensures supported answers cite retrieved evidence, consolidates duplicate document/page references, and shows a sanitized excerpt under **Sources Used**.
+WorkAssist AI removes invented labels, ensures supported answers cite retrieved evidence, consolidates duplicate document/page references, and shows a sanitized excerpt under **Sources Used**.
 
 ## Incremental S3 synchronization
 
@@ -554,4 +559,4 @@ Some loaders currently use `langchain-community`. Track migration to standalone 
 
 ## License
 
-Add the organization's chosen license before distributing DocuVerse.
+Add the organization's chosen license before distributing WorkAssist AI.

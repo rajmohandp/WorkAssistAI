@@ -17,6 +17,7 @@ class UserRecord:
     """Centralized prototype user configuration with a hashed password."""
 
     username: str
+    employee_id: str
     password_salt: str
     password_hash: str
     role: Role
@@ -29,12 +30,21 @@ _SHARED_PROTOTYPE_PASSWORD_HASH = (
 _USERS: dict[str, UserRecord] = {
     "admin": UserRecord(
         username="admin",
+        employee_id="ADMIN001",
         password_salt=_SHARED_PROTOTYPE_SALT,
         password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
         role="admin",
     ),
     "user01": UserRecord(
         username="user01",
+        employee_id="EMP001",
+        password_salt=_SHARED_PROTOTYPE_SALT,
+        password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
+        role="user",
+    ),
+    "user02": UserRecord(
+        username="user02",
+        employee_id="EMP002",
         password_salt=_SHARED_PROTOTYPE_SALT,
         password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
         role="user",
@@ -66,6 +76,12 @@ def authenticate_user(username: str, password: str) -> UserRecord | None:
     return None
 
 
+def get_user(username: str) -> UserRecord | None:
+    """Return a centrally configured user by normalized username."""
+
+    return _USERS.get(username.strip().casefold())
+
+
 def login(
     session: MutableMapping[str, Any],
     username: str,
@@ -86,7 +102,7 @@ def login(
 def logout(session: MutableMapping[str, Any]) -> None:
     """Remove all authentication and authorization state."""
 
-    for key in ("authenticated", "username", "role"):
+    for key in ("authenticated", "username", "role", "access_token"):
         session.pop(key, None)
 
 

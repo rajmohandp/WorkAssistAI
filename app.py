@@ -14,6 +14,9 @@ from app.frontend_client import (
     API_BASE_URL,
     DocuVerseAPIError,
     ask_question_http,
+    get_current_user_http,
+    get_handoffs_http,
+    login_http,
     synchronize_repository,
 )
 from app.frontend_client import (
@@ -22,7 +25,6 @@ from app.frontend_client import (
 from auth import (
     is_admin,
     is_authenticated,
-    login,
     logout,
 )
 from src.logging_config import configure_logging
@@ -31,7 +33,7 @@ configure_logging()
 logger = logging.getLogger("docuverse.app")
 selected_document: str | None = None
 
-st.set_page_config(page_title="DocuVerse", page_icon="📚", layout="wide")
+st.set_page_config(page_title="WorkAssist AI", page_icon="📚", layout="wide")
 
 
 def get_base64_image(image_path: str) -> str:
@@ -103,7 +105,8 @@ st.markdown(
 def render_login() -> None:
     """Render the authentication gate before any repository access."""
 
-    st.title("DocuVerse")
+    st.title("WorkAssist AI")
+    st.caption("Agentic Employee Support and PTO Assistant")
     st.subheader("Sign in")
     with st.form("login_form", clear_on_submit=False):
         username = st.text_input("Username")
@@ -114,25 +117,31 @@ def render_login() -> None:
             use_container_width=True,
         )
     if submitted:
-        if login(st.session_state, username, password):
+        try:
+            token_result = login_http(username, password)
+            access_token = token_result["access_token"]
+            identity = get_current_user_http(access_token)
+            st.session_state.authenticated = True
+            st.session_state.access_token = access_token
+            st.session_state.username = identity["username"]
+            st.session_state.role = identity["role"]
             st.session_state.app_mode = (
                 "Admin" if is_admin(st.session_state) else "Chat"
             )
             st.rerun()
-        else:
+        except DocuVerseAPIError:
             st.error("Invalid username or password.")
 
 
-if not is_authenticated(st.session_state):
+if not is_authenticated(st.session_state) or not st.session_state.get("access_token"):
     render_login()
     st.stop()
 
 
-@st.cache_data(ttl=30, show_spinner=False)
-def get_repository_status() -> dict[str, Any]:
+def get_repository_status(access_token: str) -> dict[str, Any]:
     """Read S3 and Pinecone status through FastAPI only."""
 
-    return fetch_repository_status()
+    return fetch_repository_status(access_token)
 
 
 def render_sources(sources: list[dict[str, Any]]) -> None:
@@ -174,6 +183,13 @@ def render_evaluation(evaluation: dict[str, Any] | None) -> None:
             st.caption(f"Retrieval confidence: {retrieval:.1f}%")
 
 
+def render_handoff(handoff: dict[str, Any] | None) -> None:
+    """Display the reference for a queued human-support case."""
+
+    if handoff and handoff.get("handoff_id"):
+        st.caption(f"Human-support reference: {handoff['handoff_id']}")
+
+
 def render_sync_controls() -> None:
     """Render HTTP-based synchronization controls for administrators."""
 
@@ -187,9 +203,8 @@ def render_sync_controls() -> None:
     ):
         try:
             with st.spinner("Synchronizing S3 documents with Pinecone..."):
-                sync_result = synchronize_repository()
+                sync_result = synchronize_repository(st.session_state.access_token)
             st.session_state.sync_result = sync_result
-            get_repository_status.clear()
             st.success("Document synchronization completed.")
         except DocuVerseAPIError as exc:
             logger.error(
@@ -217,11 +232,24 @@ def render_sync_controls() -> None:
             st.write(f"Vectors/chunks removed: {removed_vectors}")
             st.write(f"Failures: {sync_result['failed_documents']}")
 
+    st.subheader("HR Support Queue")
+    try:
+        handoffs = get_handoffs_http(st.session_state.access_token)
+    except DocuVerseAPIError as exc:
+        st.error(str(exc))
+    else:
+        if not handoffs:
+            st.caption("No questions are waiting for human review.")
+        for handoff in handoffs:
+            with st.expander(f"{handoff['handoff_id']} · {handoff['username']}"):
+                st.write(handoff["question"])
+                st.caption(f"Queued: {handoff['created_at']}")
+
 
 with st.sidebar:
-    st.image("assets/docuverse_logo.png", width=250)
+    st.title("WorkAssist AI")
     st.markdown(
-        '<p class="docuverse-tagline">Your Documents. Instantly Explore.</p>',
+        '<p class="docuverse-tagline">Agentic Employee Support and PTO Assistant</p>',
         unsafe_allow_html=True,
     )
     username = html.escape(str(st.session_state.username))
@@ -237,7 +265,7 @@ with st.sidebar:
     )
     if st.button("Logout", use_container_width=True):
         logout(st.session_state)
-        for key in ("app_mode", "messages", "sync_result"):
+        for key in ("access_token", "app_mode", "messages", "sync_result"):
             st.session_state.pop(key, None)
         st.rerun()
 
@@ -258,7 +286,7 @@ with st.sidebar:
     st.divider()
     st.header("Document Repository")
     try:
-        status_payload = get_repository_status()
+        status_payload = get_repository_status(st.session_state.access_token)
     except DocuVerseAPIError as exc:
         logger.warning(
             "Repository status unavailable through API",
@@ -321,7 +349,7 @@ with st.sidebar:
 
 
 if selected_mode == "Admin" and is_admin(st.session_state):
-    st.title("DocuVerse Administration")
+    st.title("WorkAssist AI Administration")
     st.subheader("Document Synchronization")
     st.caption(
         "Use Sync Documents in the sidebar to incrementally synchronize "
@@ -330,11 +358,11 @@ if selected_mode == "Admin" and is_admin(st.session_state):
     st.stop()
 
 
-st.title("DocuVerse")
-st.subheader("Intelligent Search Across Your Documents")
+st.title("WorkAssist AI")
+st.subheader("Agentic Employee Support and PTO Assistant")
 st.caption(
-    "Ask questions and receive answers grounded in your organization's "
-    "document repository."
+    "Ask about employee support, PTO balances, and information grounded in "
+    "your organization's document repository."
 )
 if selected_document:
     st.info(f"Searching document: {selected_document}")
@@ -350,6 +378,7 @@ for message in st.session_state.messages:
         if message["role"] == "assistant":
             render_sources(message.get("sources", []))
             render_evaluation(message.get("evaluation"))
+            render_handoff(message.get("handoff"))
 
 if question := st.chat_input("Ask a question about your documents"):
     st.session_state.messages.append({"role": "user", "content": question})
@@ -360,13 +389,23 @@ if question := st.chat_input("Ask a question about your documents"):
     with st.chat_message("assistant"):
         try:
             with st.spinner("Searching the document repository..."):
-                result = ask_question_http(question, document=selected_document)
+                result = ask_question_http(
+                    question,
+                    access_token=st.session_state.access_token,
+                    document=selected_document,
+                    history=st.session_state.messages[:-1],
+                )
             answer = result["answer"]
             sources = result.get("sources", [])
             evaluation = result.get("evaluation")
-            st.markdown(answer)
+            handoff = result.get("handoff")
+            if result.get("resolution") == "escalated":
+                st.warning(answer)
+            else:
+                st.markdown(answer)
             render_sources(sources)
             render_evaluation(evaluation)
+            render_handoff(handoff)
         except DocuVerseAPIError as exc:
             logger.error(
                 "Chat API request failed",
@@ -379,6 +418,7 @@ if question := st.chat_input("Ask a question about your documents"):
             answer = str(exc)
             sources = []
             evaluation = None
+            handoff = None
             st.error(answer)
 
     st.session_state.messages.append(
@@ -387,5 +427,6 @@ if question := st.chat_input("Ask a question about your documents"):
             "content": answer,
             "sources": sources,
             "evaluation": evaluation,
+            "handoff": handoff,
         }
     )

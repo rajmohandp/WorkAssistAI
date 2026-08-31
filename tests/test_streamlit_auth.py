@@ -10,7 +10,12 @@ APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 class FakeResponse:
     ok = True
 
+    def __init__(self, payload=None):
+        self.payload = payload
+
     def json(self):
+        if self.payload is not None:
+            return self.payload
         return {
             "s3": {
                 "connected": True,
@@ -28,9 +33,30 @@ class FakeResponse:
 
 
 def _login(monkeypatch, username, password):
+    identity = {
+        "username": username,
+        "employee_id": "ADMIN001" if username == "admin" else "EMP001",
+        "role": "admin" if username == "admin" else "user",
+    }
+
+    def fake_post(url, json, **_kwargs):
+        if url.endswith("/auth/login") and password == "welcome123":
+            return FakeResponse(
+                {"access_token": "signed-token", "token_type": "bearer"}
+            )
+        return FakeResponse({"detail": "Invalid username or password."})
+
+    def fake_get(url, **_kwargs):
+        if url.endswith("/auth/me"):
+            return FakeResponse(identity)
+        if url.endswith("/handoffs"):
+            return FakeResponse([])
+        return FakeResponse()
+
+    monkeypatch.setattr("app.frontend_client.requests.post", fake_post)
     monkeypatch.setattr(
         "app.frontend_client.requests.get",
-        lambda *_args, **_kwargs: FakeResponse(),
+        fake_get,
     )
     app = AppTest.from_file(APP_PATH).run(timeout=10)
     app.text_input[0].input(username)
@@ -46,6 +72,7 @@ def test_unauthenticated_session_only_shows_login():
     assert [field.label for field in app.text_input] == ["Username", "Password"]
     assert [button.label for button in app.button] == ["Login"]
     assert not app.radio
+    assert app.title[0].value == "WorkAssist AI"
 
 
 def test_admin_enters_admin_mode_with_sync_access(monkeypatch):
@@ -65,6 +92,20 @@ def test_user_enters_user_mode_without_admin_access(monkeypatch):
     assert not app.exception
     assert app.session_state.authenticated is True
     assert app.session_state.username == "user01"
+    assert app.session_state.role == "user"
+    assert not app.radio
+    assert "Sync Documents" not in [button.label for button in app.button]
+    assert "Clear Conversation" in [button.label for button in app.button]
+    assert app.title[-1].value == "WorkAssist AI"
+    assert app.subheader[-1].value == "Agentic Employee Support and PTO Assistant"
+
+
+def test_user02_enters_user_mode_without_admin_access(monkeypatch):
+    app = _login(monkeypatch, "user02", "welcome123")
+
+    assert not app.exception
+    assert app.session_state.authenticated is True
+    assert app.session_state.username == "user02"
     assert app.session_state.role == "user"
     assert not app.radio
     assert "Sync Documents" not in [button.label for button in app.button]

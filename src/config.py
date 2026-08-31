@@ -63,12 +63,62 @@ class EnvironmentSettings(BaseSettings):
     retrieval_min_score: float = DEFAULT_RETRIEVAL_MIN_SCORE
     log_level: str = "INFO"
     rag_evaluation_enabled: bool = False
+    db_host: str = ""
+    db_port: int = 0
+    db_name: str = ""
+    db_user: str = ""
+    db_password: SecretStr = SecretStr("")
+    auth_token_secret: SecretStr = SecretStr("")
+    auth_token_ttl_seconds: int = 1800
 
 
 def get_environment_settings() -> EnvironmentSettings:
     """Load a fresh validated view of `.env` and process environment values."""
 
     return EnvironmentSettings()
+
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    """Validated, secret-safe AWS RDS MySQL configuration."""
+
+    host: str
+    port: int
+    name: str
+    user: str
+    password: str
+
+    def __post_init__(self) -> None:
+        required_values = {
+            "DB_HOST": self.host,
+            "DB_NAME": self.name,
+            "DB_USER": self.user,
+            "DB_PASSWORD": self.password,
+        }
+        missing = [name for name, value in required_values.items() if not value]
+        if missing:
+            raise ValueError(f"Missing database configuration: {', '.join(missing)}")
+        if not 1 <= self.port <= 65535:
+            raise ValueError("DB_PORT must be between 1 and 65535.")
+
+    def __repr__(self) -> str:
+        return (
+            f"DatabaseSettings(host={self.host!r}, port={self.port!r}, "
+            f"name={self.name!r}, user={self.user!r}, password='********')"
+        )
+
+
+def get_database_settings() -> DatabaseSettings:
+    """Load database configuration without exposing the password."""
+
+    environment = get_environment_settings()
+    return DatabaseSettings(
+        host=environment.db_host.strip(),
+        port=environment.db_port,
+        name=environment.db_name.strip(),
+        user=environment.db_user.strip(),
+        password=environment.db_password.get_secret_value(),
+    )
 
 
 @dataclass(frozen=True)

@@ -38,6 +38,21 @@ def test_user_login_assigns_user_role_without_admin_access():
     assert not is_admin(session)
 
 
+def test_user02_login_assigns_user_role_without_admin_access():
+    session = {}
+
+    assert login(session, "  USER02  ", "welcome123") is True
+    assert session == {
+        "authenticated": True,
+        "username": "user02",
+        "role": "user",
+    }
+    assert is_authenticated(session)
+    assert has_role(session, "user")
+    assert not has_role(session, "admin")
+    assert not is_admin(session)
+
+
 def test_invalid_login_is_rejected_and_clears_previous_identity():
     session = {
         "authenticated": True,

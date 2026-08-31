@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 
 GREETING_RESPONSE = (
-    "Hello! 👋 Welcome to DocuVerse. I can help you find information from your "
-    "organization's documents. What would you like to know?"
+    "Hello! 👋 Welcome to WorkAssist AI. I can help with employee support, PTO, "
+    "and information from your organization's documents. What would you like to know?"
 )
 THANKS_RESPONSE = (
     "You're welcome! Let me know if you'd like to search for anything else in "
@@ -16,13 +16,12 @@ ACKNOWLEDGEMENT_RESPONSE = (
     "Great! Ask me another question whenever you'd like to search your documents."
 )
 CAPABILITIES_RESPONSE = (
-    "I can search your organization's documents and answer questions based on "
-    "the information available in them. Ask me a question about the documents "
-    "to get started."
+    "I can help with employee support, retrieve PTO balances, and answer questions "
+    "grounded in your organization's documents."
 )
 HELP_RESPONSE = (
-    "Ask me a question about the information stored in your organization's "
-    "documents. I'll search the relevant content and provide a grounded answer."
+    "Ask about your PTO balance, time-off availability, or information stored in "
+    "your organization's documents."
 )
 GOODBYE_RESPONSE = (
     "Goodbye! 👋 Come back anytime you need help searching your documents."
@@ -31,7 +30,7 @@ GOODBYE_RESPONSE = (
 _NON_WORD_PATTERN = re.compile(r"[^\w']+", re.UNICODE)
 _GREETING_PATTERN = re.compile(
     r"(?:hi|hello|hey|good morning|good afternoon|good evening)"
-    r"(?: docuverse)?",
+    r"(?: docuverse| workassist ai)?",
     re.IGNORECASE,
 )
 

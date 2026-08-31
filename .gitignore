@@ -8,7 +8,7 @@ __pycache__/
 .venv-validation/
 .pytest_cache/
 .pytest-tmp/
-.pytest-*/
+.pytest-runtime-*/
 .mypy_cache/
 .ruff_cache/
 
@@ -20,3 +20,4 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+~$*.xlsx

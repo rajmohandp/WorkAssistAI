@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -37,7 +37,7 @@ INSUFFICIENT_CONTEXT_MESSAGE = (
     "I could not find enough information in the available documents to answer "
     "this question."
 )
-SYSTEM_PROMPT = """You are DocuVerse, an AI assistant that answers questions using the organization's document repository.
+SYSTEM_PROMPT = """You are WorkAssist AI, an AI assistant that answers questions using the organization's document repository.
 
 Answer the question using only the provided document context.
 
@@ -73,6 +73,9 @@ class RAGError(RuntimeError):
     """Raised when the retrieval-augmented answer cannot be completed."""
 
 
+ResolutionStatus = Literal["grounded", "insufficient_context", "security_refusal"]
+
+
 @dataclass(frozen=True)
 class SourceCitation:
     """A retrieved source consolidated to one document and page."""
@@ -92,6 +95,7 @@ class RAGResult:
     source_metadata: list[dict[str, Any]]
     sources_used: list[SourceCitation]
     retrieval_query: str
+    resolution_status: ResolutionStatus = "grounded"
     evaluation: dict[str, Any] | None = None
 
 
@@ -242,10 +246,10 @@ def contextualize_question(
                 "error_type": type(exc).__name__,
             },
         )
-        raise RAGError("DocuVerse could not interpret the follow-up question.") from exc
+        raise RAGError("WorkAssist AI could not interpret the follow-up question.") from exc
     resolved_query = validate_question(standalone_query or stripped_question)
     if is_sensitive_request(resolved_query):
-        raise RAGError("DocuVerse could not create a safe retrieval query.")
+        raise RAGError("WorkAssist AI could not create a safe retrieval query.")
     return resolved_query
 
 
@@ -391,7 +395,7 @@ def generate_answer(
                 "error_type": type(exc).__name__,
             },
         )
-        raise RAGError("DocuVerse could not generate an answer.") from exc
+        raise RAGError("WorkAssist AI could not generate an answer.") from exc
 
 
 def apply_retrieval_guardrails(
@@ -459,6 +463,7 @@ def run_rag(
             source_metadata=[],
             sources_used=[],
             retrieval_query="",
+            resolution_status="security_refusal",
         )
 
     bounded_history = prepare_conversation_history(conversation_history)
@@ -503,4 +508,9 @@ def run_rag(
         source_metadata=source_metadata,
         sources_used=build_source_citations(retrieved),
         retrieval_query=retrieval_query,
+        resolution_status=(
+            "insufficient_context"
+            if answer == INSUFFICIENT_CONTEXT_MESSAGE
+            else "grounded"
+        ),
     )
