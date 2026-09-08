@@ -22,9 +22,11 @@ from app.api.schemas import (
     HealthResponse,
     QueryRequest,
     QueryResponse,
+    ReadinessResponse,
     RepositoryStatusResponse,
     SyncResponse,
 )
+from app.core.database import DatabaseConnectionError, check_database_health
 from app.core.security import AuthenticatedUser, get_current_user, require_admin
 from app.services.conversation_service import get_conversational_response
 from app.services.handoff_service import handoff_service
@@ -48,6 +50,25 @@ sync_service = SyncService()
 @router.get("/health", response_model=HealthResponse, tags=["system"])
 async def health() -> HealthResponse:
     return HealthResponse()
+
+
+@router.get(
+    "/ready",
+    response_model=ReadinessResponse,
+    responses={503: {"description": "Database unavailable"}},
+    tags=["system"],
+)
+async def readiness() -> ReadinessResponse:
+    """Report readiness only after a lightweight database connectivity check."""
+
+    try:
+        await run_in_threadpool(check_database_health)
+    except DatabaseConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The service is not ready.",
+        ) from exc
+    return ReadinessResponse()
 
 
 @router.post(

@@ -13,6 +13,7 @@ from src.s3_loader import (
     S3BucketNotFoundError,
     S3CredentialsError,
     S3NetworkError,
+    _create_s3_client,
     _loader_for,
     list_documents,
     load_documents,
@@ -103,6 +104,99 @@ def test_maps_aws_errors_to_safe_repository_errors(error, expected):
         list_documents("documents", s3_client=FakeClient(error=error))
 
     assert "sensitive AWS response" not in str(caught.value)
+
+
+def test_s3_client_uses_region_and_optional_profile_without_explicit_keys(monkeypatch):
+    captured = {}
+    expected_client = object()
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            captured["session"] = kwargs
+
+        def client(self, service_name):
+            captured["service"] = service_name
+            return expected_client
+
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("AWS_PROFILE", "workassist-local")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "must-not-be-forwarded")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "must-not-be-forwarded")
+    monkeypatch.setattr("src.s3_loader.boto3.Session", FakeSession)
+
+    assert _create_s3_client() is expected_client
+    assert captured == {
+        "session": {
+            "region_name": "us-west-2",
+            "profile_name": "workassist-local",
+        },
+        "service": "s3",
+    }
+
+
+@pytest.mark.parametrize("with_keys", [True, False])
+def test_s3_client_loads_dotenv_credentials_or_preserves_default_chain(monkeypatch, tmp_path, with_keys):
+    from src.config import EnvironmentSettings
+
+    for name in ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "AWS_ACCESS_KEY_ID=test-key\nAWS_SECRET_ACCESS_KEY=test-secret\nAWS_SESSION_TOKEN=test-token\n"
+        if with_keys else "",
+        encoding="utf-8",
+    )
+    settings = EnvironmentSettings(_env_file=env_file)
+    captured = {}
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def client(self, service_name):
+            return service_name
+
+    monkeypatch.setattr("src.s3_loader.get_environment_settings", lambda: settings)
+    monkeypatch.setattr("src.s3_loader.boto3.Session", FakeSession)
+    assert _create_s3_client() == "s3"
+    if with_keys:
+        assert captured["aws_access_key_id"] == "test-key"
+        assert captured["aws_secret_access_key"] == "test-secret"
+        assert captured["aws_session_token"] == "test-token"
+        assert "test-secret" not in repr(settings)
+    else:
+        assert not any(name.startswith("aws_") for name in captured)
+
+
+def test_missing_object_is_reported_safely_and_ingestion_continues():
+    class MissingObjectClient(FakeClient):
+        def download_file(self, bucket, key, filename):
+            raise client_error("NoSuchKey", 404)
+
+    metadata = [
+        {
+            "file_name": "missing.pdf",
+            "s3_key": "private/missing.pdf",
+            "file_type": "pdf",
+            "file_size": 42,
+            "last_modified": datetime(2026, 1, 2, tzinfo=UTC),
+            "etag": "gone",
+        }
+    ]
+
+    result = load_documents(
+        "documents", document_metadata=metadata, s3_client=MissingObjectClient()
+    )
+
+    assert result.loaded_files == 0
+    assert result.documents == []
+    assert result.failed_documents == [
+        {
+            "filename": "missing.pdf",
+            "s3_key": "private/missing.pdf",
+            "error": "The S3 object no longer exists.",
+        }
+    ]
 
 
 def test_loads_documents_and_normalizes_metadata(monkeypatch):

@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.database import get_session_factory
+from app.core.database import discard_failed_session, get_session_factory
 
 logger = logging.getLogger(__name__)
 PTOType = Literal[
@@ -176,6 +176,7 @@ def get_current_pto_balance(
     try:
         rows = resolved_session.execute(statement).mappings().all()
     except SQLAlchemyError as exc:
+        discard_failed_session(resolved_session, exc)
         logger.error(
             "PTO balance lookup failed",
             extra={

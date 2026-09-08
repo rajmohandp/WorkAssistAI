@@ -1,0 +1,63 @@
+name: workassist-local
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      APP_ENV: development
+      DB_SSL_CA_PATH: /run/secrets/aws-rds-global-bundle.pem
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./certs/global-bundle.pem:/run/secrets/aws-rds-global-bundle.pem:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - private
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - private
+
+networks:
+  private:
+    name: workassist-local-private
+    driver: bridge

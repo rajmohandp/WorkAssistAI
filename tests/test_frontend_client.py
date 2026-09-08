@@ -52,8 +52,22 @@ def test_ask_question_http_handles_connection_error(monkeypatch):
 
     monkeypatch.setattr("app.frontend_client.requests.post", fail)
 
-    with pytest.raises(DocuVerseAPIError, match="Confirm FastAPI is running"):
+    with pytest.raises(DocuVerseAPIError, match="temporarily unavailable"):
         ask_question_http("What is the policy?", access_token=TOKEN)
+
+
+def test_default_timeout_has_separate_connection_and_response_limits(monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers, json, timeout):
+        captured["timeout"] = timeout
+        return FakeResponse({"answer": "Answer", "sources": []})
+
+    monkeypatch.setattr("app.frontend_client.requests.post", fake_post)
+
+    ask_question_http("What is the policy?", access_token=TOKEN)
+
+    assert captured["timeout"] == (5.0, 90.0)
 
 
 def test_ask_question_http_sends_selected_document(monkeypatch):

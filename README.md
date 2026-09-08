@@ -168,11 +168,28 @@ The AWS principal used by WorkAssist AI should have only the permissions it need
 - `s3:GetObject` for supported documents; and
 - access to all prefixes that should be indexed.
 
-WorkAssist AI uses Boto3's standard AWS credential chain. Local access-key variables are supported, but AWS profiles, workload credentials, and IAM roles are preferred where available.
+WorkAssist AI uses Boto3's standard AWS credential-provider chain. On EC2, attach
+an instance profile and leave `AWS_PROFILE`, `AWS_ACCESS_KEY_ID`, and
+`AWS_SECRET_ACCESS_KEY` unset so Boto3 obtains temporary credentials from the
+instance role. When the application runs in Docker on EC2, configure the
+instance metadata response hop limit to allow the container to reach IMDSv2.
+
+For local development, authenticate with the AWS CLI and optionally select a
+named profile. Static keys are neither read nor passed explicitly by the
+application:
 
 ```dotenv
+AWS_REGION=us-west-2
 S3_BUCKET_NAME=your-lowercase-bucket-name
+AWS_PROFILE=workassist-local
 ```
+
+The example EC2 policy is
+[`deployment/aws/ec2-s3-policy.json`](deployment/aws/ec2-s3-policy.json).
+Replace `WORKASSIST_BUCKET` with the exact bucket name before attaching it to
+the EC2 role. Document synchronization is S3 read-only, so the policy contains
+no object write or delete actions. If objects are encrypted with a customer
+managed KMS key, separately grant `kms:Decrypt` on that specific key.
 
 ## Pinecone setup
 
@@ -193,15 +210,23 @@ WorkAssist AI connects to the existing index and validates its dimension before 
 Create `.env` in the project root. Replace these placeholders locally and never commit the completed file.
 
 ```dotenv
-# Amazon S3
-AWS_ACCESS_KEY_ID=your-aws-access-key-id
-AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
+# Application
+APP_ENV=development
+BACKEND_URL=http://localhost:8000
+ALLOWED_ORIGINS=http://localhost:8501
+LOG_LEVEL=INFO
+
+# Amazon S3 (prefer an IAM role instead of static AWS keys)
 AWS_REGION=us-west-2
 S3_BUCKET_NAME=your-lowercase-bucket-name
+# Local only; leave blank on EC2 to use its IAM role
+AWS_PROFILE=
 
 # Pinecone
 PINECONE_API_KEY=your-pinecone-api-key
 PINECONE_INDEX_NAME=your-existing-index-name
+PINECONE_CLOUD=aws
+PINECONE_REGION=us-west-2
 PINECONE_NAMESPACE=
 PINECONE_BATCH_SIZE=100
 
@@ -223,16 +248,16 @@ CHUNK_OVERLAP=200
 RETRIEVER_TOP_K=5
 RETRIEVAL_MIN_SCORE=0.3
 
-# Streamlit-to-FastAPI connection
-FASTAPI_URL=http://localhost:8000
+# Amazon RDS MySQL
+DATABASE_URL=mysql+pymysql://user:password@host:3306/database
+DB_SSL_CA_PATH=/path/to/global-bundle.pem
 
 # Backend-issued signed access tokens
 # Generate a unique random secret of at least 32 characters; never commit it.
-AUTH_TOKEN_SECRET=replace-with-a-long-random-secret
+JWT_SECRET_KEY=replace-with-a-long-random-secret
+# JSON user records containing salted PBKDF2 password hashes, never plaintext.
+AUTH_USERS_JSON=replace-with-json-user-records
 AUTH_TOKEN_TTL_SECONDS=1800
-
-# DEBUG, INFO, WARNING, or ERROR
-LOG_LEVEL=INFO
 ```
 
 Only the selected chat provider key is required for answer generation. `OPENAI_API_KEY` remains required while OpenAI is the embedding provider.
@@ -252,6 +277,32 @@ uv run ruff check .
 uv run pytest -q
 ```
 
+### Service dependency manifests
+
+The repository has separate production dependency boundaries:
+
+- `backend/requirements.txt` contains FastAPI, Uvicorn, MySQL, AWS, Pinecone,
+  OpenAI/Groq, LangChain, and LangGraph dependencies.
+- `frontend/requirements.txt` contains only Streamlit, the HTTP client, and
+  environment-configuration dependencies.
+- The root `requirements.txt` installs both sets for combined local development.
+
+The service manifests pin the direct versions exercised by the test suite. The
+existing `pyproject.toml` and `uv.lock` remain the development dependency source
+and lock file. LangChain integration packages must be upgraded together because
+their compatibility depends on `langchain-core` and Pydantic versions. The
+legacy `langchain` metapackage remains in the development project for lock-file
+stability, but it is not installed directly in either service image because the
+runtime imports only `langchain-core` and specific integrations.
+
+No document parser in this application requires Poppler, Tesseract, LibreOffice,
+or a MySQL client library. A Linux runtime needs standard CA certificates and the
+configured Amazon RDS CA bundle. Packages pulled in by `uvicorn[standard]` and
+Streamlit can contain native extensions, but publish Linux wheels for supported
+CPython 3.11 platforms. A compiler is therefore not normally required on
+x86-64 or ARM64 images; source-only or unsupported-platform installs may require
+a C/C++ toolchain and Rust.
+
 ## Running locally
 
 Start Streamlit from the directory containing `app.py` and `.env`:
@@ -261,6 +312,11 @@ uv run streamlit run streamlit_app.py
 ```
 
 Open the URL printed by Streamlit, normally `http://localhost:8501`.
+
+The frontend reads `BACKEND_URL`, which defaults to `http://localhost:8000` for
+local development. Set `BACKEND_URL=http://backend:8000` when the FastAPI
+container is named `backend` on the same Docker network. The internal backend
+address is not displayed in the Streamlit interface.
 
 The sidebar provides two separate sections:
 
@@ -272,6 +328,60 @@ Start the FastAPI backend in a separate terminal:
 ```powershell
 uv run uvicorn app.main:app --reload
 ```
+
+For a container or other network-accessible runtime, bind FastAPI explicitly:
+
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+The lightweight `GET /health` endpoint reports process availability without
+contacting OpenAI, Pinecone, Amazon S3, or MySQL. Set `ALLOWED_ORIGINS` to a
+comma-separated list of trusted frontend origins. Wildcard CORS is rejected
+when `APP_ENV=production`.
+
+Database readiness is reported separately by `GET /ready` (and
+`GET /api/v1/ready`). It executes only `SELECT 1`, returns HTTP 503 with a
+generic response when RDS is unavailable, and does not expose connection or
+employee details. The backend reads `DATABASE_URL` using the
+`mysql+pymysql://` driver, verifies TLS with `DB_SSL_CA_PATH`, and uses a small
+SQLAlchemy pool with pre-ping and connection recycling.
+
+For RDS network access, configure this inbound rule on the RDS security group:
+
+- Type: MySQL/Aurora
+- Protocol: TCP
+- Port: `3306`
+- Source: the WorkAssist AI EC2 security group ID (for example, `sg-ec2app`)
+
+Do not use an IP CIDR such as `0.0.0.0/0`, and do not open port 3306 publicly.
+
+## Docker Compose
+
+Before starting the production stack, place the Amazon RDS CA bundle at
+`certs/global-bundle.pem`, the TLS certificate chain at
+`nginx/certs/fullchain.pem`, and the matching private key at
+`nginx/certs/privkey.pem`. These files are excluded from Git and Docker builds.
+
+Start and stop the production stack:
+
+```bash
+docker compose up --build -d
+docker compose down
+```
+
+Only Nginx publishes host ports (`80` and `443`); FastAPI and Streamlit remain
+reachable only on the Compose bridge network. Start the standalone local stack,
+which publishes FastAPI on `8000` and Streamlit on `8501`, with:
+
+```bash
+docker compose -f docker-compose.local.yml up --build -d
+docker compose -f docker-compose.local.yml down
+```
+
+Both stacks use bounded JSON-file logging and load backend secrets at runtime
+from the untracked `.env` file. No MySQL container is created because PTO data
+continues to use Amazon RDS.
 
 The backend is normally available at `http://127.0.0.1:8000`. Interactive API
 documentation is available at `http://127.0.0.1:8000/docs`.

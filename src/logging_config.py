@@ -12,6 +12,18 @@ from src.guardrails import redact_sensitive_text
 
 _HANDLER_MARKER = "_docuverse_structured_handler"
 _STANDARD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__)
+_SENSITIVE_LOG_FIELDS = frozenset(
+    {
+        "access_token",
+        "authorization",
+        "employee_id",
+        "password",
+        "question",
+        "request_body",
+        "token",
+        "username",
+    }
+)
 
 
 class StructuredJsonFormatter(logging.Formatter):
@@ -26,6 +38,9 @@ class StructuredJsonFormatter(logging.Formatter):
         }
         for key, value in record.__dict__.items():
             if key in _STANDARD_FIELDS or key.startswith("_"):
+                continue
+            if key.casefold() in _SENSITIVE_LOG_FIELDS:
+                payload[key] = "[REDACTED]"
                 continue
             if isinstance(value, (str, int, float, bool)) or value is None:
                 payload[key] = (

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from src.config import get_environment_settings
 
 Role = Literal["admin", "user"]
 _PASSWORD_ITERATIONS = 310_000
@@ -23,33 +26,29 @@ class UserRecord:
     role: Role
 
 
-_SHARED_PROTOTYPE_SALT = "docuverse-prototype-v1"
-_SHARED_PROTOTYPE_PASSWORD_HASH = (
-    "cf74315433aa7ca9fc5eea7f5a68db891e4ac7704b0c4ce8104f1e490d8aba48"
-)
-_USERS: dict[str, UserRecord] = {
-    "admin": UserRecord(
-        username="admin",
-        employee_id="ADMIN001",
-        password_salt=_SHARED_PROTOTYPE_SALT,
-        password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
-        role="admin",
-    ),
-    "user01": UserRecord(
-        username="user01",
-        employee_id="EMP001",
-        password_salt=_SHARED_PROTOTYPE_SALT,
-        password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
-        role="user",
-    ),
-    "user02": UserRecord(
-        username="user02",
-        employee_id="EMP002",
-        password_salt=_SHARED_PROTOTYPE_SALT,
-        password_hash=_SHARED_PROTOTYPE_PASSWORD_HASH,
-        role="user",
-    ),
-}
+def _configured_users() -> dict[str, UserRecord]:
+    """Load password hashes and user identities from protected configuration."""
+
+    raw_users = get_environment_settings().auth_users_json.get_secret_value().strip()
+    if not raw_users:
+        raise RuntimeError("Missing required environment variable: AUTH_USERS_JSON")
+    try:
+        records = json.loads(raw_users)
+        users = {
+            str(record["username"]).strip().casefold(): UserRecord(
+                username=str(record["username"]).strip().casefold(),
+                employee_id=str(record["employee_id"]).strip(),
+                password_salt=str(record["password_salt"]),
+                password_hash=str(record["password_hash"]),
+                role=record["role"],
+            )
+            for record in records
+        }
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("AUTH_USERS_JSON is not valid user configuration.") from exc
+    if not users or any(user.role not in {"admin", "user"} for user in users.values()):
+        raise RuntimeError("AUTH_USERS_JSON must contain valid admin or user records.")
+    return users
 
 
 def _hash_password(password: str, salt: str) -> str:
@@ -65,11 +64,10 @@ def authenticate_user(username: str, password: str) -> UserRecord | None:
     """Validate credentials and return the centrally configured user record."""
 
     normalized_username = username.strip().casefold()
-    user = _USERS.get(normalized_username)
-    salt = user.password_salt if user else _SHARED_PROTOTYPE_SALT
-    expected_hash = (
-        user.password_hash if user else _SHARED_PROTOTYPE_PASSWORD_HASH
-    )
+    users = _configured_users()
+    user = users.get(normalized_username)
+    salt = user.password_salt if user else "invalid-user-salt"
+    expected_hash = user.password_hash if user else "0" * 64
     supplied_hash = _hash_password(password, salt)
     if user and hmac.compare_digest(supplied_hash, expected_hash):
         return user
@@ -79,7 +77,7 @@ def authenticate_user(username: str, password: str) -> UserRecord | None:
 def get_user(username: str) -> UserRecord | None:
     """Return a centrally configured user by normalized username."""
 
-    return _USERS.get(username.strip().casefold())
+    return _configured_users().get(username.strip().casefold())
 
 
 def login(

@@ -20,6 +20,7 @@ from botocore.exceptions import (
     EndpointConnectionError,
     NoCredentialsError,
     PartialCredentialsError,
+    ProfileNotFound,
     ReadTimeoutError,
 )
 from langchain_community.document_loaders import (
@@ -80,6 +81,10 @@ class S3BucketNotFoundError(S3RepositoryError):
     """Raised when the configured bucket does not exist."""
 
 
+class S3ObjectNotFoundError(S3RepositoryError):
+    """Raised when a listed S3 object no longer exists."""
+
+
 class S3AccessDeniedError(S3RepositoryError):
     """Raised when AWS denies access to the configured bucket."""
 
@@ -103,15 +108,59 @@ def _create_s3_client() -> Any:
     """Create an S3 client using boto3's standard AWS credential chain."""
 
     settings = get_environment_settings()
-    client_options: dict[str, str] = {}
+    session_options: dict[str, str] = {}
     if region := settings.aws_region.strip():
-        client_options["region_name"] = region
-    access_key = settings.aws_access_key_id.get_secret_value().strip()
-    secret_key = settings.aws_secret_access_key.get_secret_value().strip()
-    if access_key and secret_key:
-        client_options["aws_access_key_id"] = access_key
-        client_options["aws_secret_access_key"] = secret_key
-    return boto3.client("s3", **client_options)
+        session_options["region_name"] = region
+    if profile := settings.aws_profile.strip():
+        session_options["profile_name"] = profile
+    else:
+        for name in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token"):
+            if value := getattr(settings, name).get_secret_value():
+                session_options[name] = value
+    try:
+        return boto3.Session(**session_options).client("s3")
+    except ProfileNotFound as exc:
+        raise S3CredentialsError(
+            "The configured local AWS profile could not be found."
+        ) from exc
+
+
+def _raise_s3_client_error(
+    exc: ClientError, *, object_operation: bool = False
+) -> None:
+    """Translate an AWS response without exposing its potentially sensitive text."""
+
+    error = exc.response.get("Error", {})
+    code = str(error.get("Code", ""))
+    status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    logger.error(
+        "S3 request failed",
+        extra={
+            "operation": "s3",
+            "event": "request_failed",
+            "error_code": code,
+            "http_status": status,
+        },
+    )
+    if code in {"InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken"}:
+        raise S3CredentialsError("AWS credentials are invalid or expired.") from exc
+    object_missing = code in {
+        "NoSuchKey",
+        "NoSuchObject",
+        "NotFound",
+        "404",
+    } or status == 404
+    if object_operation and object_missing:
+        raise S3ObjectNotFoundError("The requested S3 object does not exist.") from exc
+    if code in {"NoSuchBucket", "NotFound", "404"} or status == 404:
+        raise S3BucketNotFoundError(
+            "The configured S3 bucket does not exist."
+        ) from exc
+    if code in {"AccessDenied", "AllAccessDisabled", "403"} or status == 403:
+        raise S3AccessDeniedError(
+            "Access to the configured S3 bucket was denied."
+        ) from exc
+    raise S3RepositoryError("Amazon S3 returned an unexpected error.") from exc
 
 
 def list_documents(
@@ -171,30 +220,7 @@ def list_documents(
             "AWS credentials are missing or incomplete."
         ) from exc
     except ClientError as exc:
-        error = exc.response.get("Error", {})
-        code = str(error.get("Code", ""))
-        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        logger.error(
-            "S3 request failed",
-            extra={
-                "operation": "s3",
-                "event": "request_failed",
-                "error_code": code,
-                "http_status": status,
-            },
-        )
-
-        if code in {"InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken"}:
-            raise S3CredentialsError("AWS credentials are invalid or expired.") from exc
-        if code in {"NoSuchBucket", "NotFound", "404"} or status == 404:
-            raise S3BucketNotFoundError(
-                "The configured S3 bucket does not exist."
-            ) from exc
-        if code in {"AccessDenied", "AllAccessDisabled", "403"} or status == 403:
-            raise S3AccessDeniedError(
-                "Access to the configured S3 bucket was denied."
-            ) from exc
-        raise S3RepositoryError("Amazon S3 returned an unexpected error.") from exc
+        _raise_s3_client_error(exc)
     except (
         EndpointConnectionError,
         ConnectionClosedError,
@@ -333,6 +359,37 @@ def load_documents(
                         "extracted_documents": len(loaded),
                     },
                 )
+            except (NoCredentialsError, PartialCredentialsError) as exc:
+                raise S3CredentialsError(
+                    "AWS credentials are missing or incomplete."
+                ) from exc
+            except ClientError as exc:
+                try:
+                    _raise_s3_client_error(exc, object_operation=True)
+                except S3ObjectNotFoundError:
+                    logger.warning(
+                        "S3 object is missing; continuing ingestion",
+                        extra={
+                            "operation": "document_loading",
+                            "event": "object_missing",
+                        },
+                    )
+                    failed.append(
+                        {
+                            "filename": item["file_name"],
+                            "s3_key": item["s3_key"],
+                            "error": "The S3 object no longer exists.",
+                        }
+                    )
+            except (
+                EndpointConnectionError,
+                ConnectionClosedError,
+                ConnectTimeoutError,
+                ReadTimeoutError,
+            ) as exc:
+                raise S3NetworkError("Could not connect to Amazon S3.") from exc
+            except BotoCoreError as exc:
+                raise S3NetworkError("AWS communication failed.") from exc
             # Third-party parsers can raise format-specific exception types. The
             # file boundary intentionally contains all of them so one corrupt
             # object cannot abort the remaining ingestion batch.

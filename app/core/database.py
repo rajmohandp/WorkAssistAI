@@ -6,20 +6,22 @@ import logging
 import ssl
 from collections.abc import Generator
 from functools import lru_cache
-from pathlib import Path
 
-from sqlalchemy import URL, Engine, create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import URL, Engine, create_engine, make_url, text
+from sqlalchemy.exc import ArgumentError, DBAPIError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.config import DatabaseSettings, get_database_settings
+from src.config import (
+    DatabaseSettings,
+    get_environment_settings,
+)
 
 logger = logging.getLogger(__name__)
-POOL_SIZE = 5
-MAX_OVERFLOW = 10
-POOL_RECYCLE_SECONDS = 1800
+POOL_SIZE = 3
+MAX_OVERFLOW = 2
+POOL_RECYCLE_SECONDS = 900
+POOL_TIMEOUT_SECONDS = 10
 CONNECT_TIMEOUT_SECONDS = 10
-RDS_CA_BUNDLE_PATH = Path(r"C:\Users\rmohan\certs\global-bundle.pem")
 
 
 class DatabaseConnectionError(RuntimeError):
@@ -40,25 +42,38 @@ def build_database_url(settings: DatabaseSettings) -> URL:
     )
 
 
-def create_database_engine(settings: DatabaseSettings | None = None) -> Engine:
-    """Create a pooled, TLS-verified MySQL engine."""
+def create_database_engine() -> Engine:
+    """Create a conservative pool from the configured SQLAlchemy URL."""
 
-    resolved_settings = settings or get_database_settings()
+    environment = get_environment_settings()
+    database_url = environment.database_url.get_secret_value().strip()
+    if not database_url:
+        raise DatabaseConnectionError("DATABASE_URL is required.")
+    try:
+        url = make_url(database_url)
+    except ArgumentError as exc:
+        raise DatabaseConnectionError("DATABASE_URL is invalid.") from exc
+    if url.drivername != "mysql+pymysql":
+        raise DatabaseConnectionError(
+            "DATABASE_URL must use the mysql+pymysql driver."
+        )
+    connect_args = {"connect_timeout": CONNECT_TIMEOUT_SECONDS}
+    if environment.db_ssl_ca_path.strip():
+        connect_args["ssl"] = {
+            "ca": environment.db_ssl_ca_path.strip(),
+            "check_hostname": True,
+            "verify_mode": ssl.CERT_REQUIRED,
+        }
     return create_engine(
-        build_database_url(resolved_settings),
+        url,
         pool_size=POOL_SIZE,
         max_overflow=MAX_OVERFLOW,
         pool_pre_ping=True,
         pool_recycle=POOL_RECYCLE_SECONDS,
-        connect_args={
-            "connect_timeout": CONNECT_TIMEOUT_SECONDS,
-            "ssl": {
-                "ca": str(RDS_CA_BUNDLE_PATH),
-                "check_hostname": True,
-                "verify_mode": ssl.CERT_REQUIRED,
-            },
-        },
+        pool_timeout=POOL_TIMEOUT_SECONDS,
+        connect_args=connect_args,
         echo=False,
+        hide_parameters=True,
     )
 
 
@@ -111,6 +126,7 @@ def check_database_health(session: Session | None = None) -> bool:
     try:
         healthy = resolved_session.execute(text("SELECT 1")).scalar_one() == 1
     except SQLAlchemyError as exc:
+        discard_failed_session(resolved_session, exc)
         logger.error(
             "Database health check failed",
             extra={
@@ -133,6 +149,20 @@ def check_database_health(session: Session | None = None) -> bool:
         },
     )
     return healthy
+
+
+def discard_failed_session(session: Session, exc: SQLAlchemyError) -> None:
+    """Reset a failed transaction and discard an invalid pooled connection."""
+
+    try:
+        session.rollback()
+    except SQLAlchemyError:
+        pass
+    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
+        try:
+            session.invalidate()
+        except SQLAlchemyError:
+            pass
 
 
 def clear_database_dependencies() -> None:

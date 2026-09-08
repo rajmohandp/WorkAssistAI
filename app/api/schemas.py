@@ -165,7 +165,13 @@ class SyncResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["healthy"] = "healthy"
-    application: str = "WorkAssist AI"
+    service: Literal["workassist-api"] = "workassist-api"
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready"] = "ready"
+    service: Literal["workassist-api"] = "workassist-api"
+    database: Literal["reachable"] = "reachable"
 
 
 class ErrorResponse(BaseModel):
