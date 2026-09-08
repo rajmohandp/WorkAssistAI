@@ -1,8 +1,22 @@
-& .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 
-& .\.venv\Scripts\python.exe -m streamlit run streamlit_app.py
+.\.venv\Scripts\python.exe -m streamlit run streamlit_app.py
 
 ----------------------------------------------------------------
+
+http://3.136.96.210/
+
+
+Local URL: http://localhost:8501
+Network URL: http://192.168.86.78:8501
+External URL: http://136.52.12.185:8501
+
+docker compose ps -a
+curl -i http://127.0.0.1/nginx-health
+curl -i -H "Host: 136.52.12.185" http://127.0.0.1/
+docker compose logs --tail=50 nginx frontend
+
+
 
 uv run uvicorn app.main:app --reload
 

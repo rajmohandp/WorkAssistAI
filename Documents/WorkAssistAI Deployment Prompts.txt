@@ -1,0 +1,450 @@
+Prompt 1 — Analyze the project
+Review the complete WorkAssist AI project before modifying anything.
+
+The application currently uses:
+- Streamlit frontend
+- FastAPI backend
+- LangGraph/LangChain
+- Amazon S3 for documents
+- Pinecone for vector storage
+- Amazon RDS MySQL for users and PTO information
+- OpenAI API
+- Role-based access control
+- Human escalation
+
+Tasks:
+1. Identify the frontend and backend entry-point files.
+2. Identify all required environment variables.
+3. Identify the ports currently used by Streamlit and FastAPI.
+4. Identify where the Streamlit frontend calls FastAPI.
+5. Identify local file paths that will fail when deployed.
+6. Identify credentials or secrets hardcoded in the source code.
+7. Identify Python and operating-system dependencies.
+8. Recommend the minimum changes required for an AWS EC2 Docker deployment.
+
+Do not change any files yet. Provide a concise assessment and implementation plan.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 2 — Centralize configuration
+Implement centralized environment-based configuration for WorkAssist AI.
+
+Requirements:
+1. Create or update a configuration module using pydantic-settings or an equivalent supported approach.
+2. Load configuration from environment variables.
+3. Support these variables where applicable:
+   - APP_ENV
+   - BACKEND_URL
+   - OPENAI_API_KEY
+   - PINECONE_API_KEY
+   - PINECONE_INDEX_NAME
+   - PINECONE_CLOUD
+   - PINECONE_REGION
+   - AWS_REGION
+   - S3_BUCKET_NAME
+   - DATABASE_URL
+   - JWT_SECRET_KEY
+   - ALLOWED_ORIGINS
+   - LOG_LEVEL
+4. Remove hardcoded endpoints, passwords, API keys, bucket names and database credentials.
+5. Fail at application startup with a clear message when a required variable is missing.
+6. Create a safe `.env.example` containing placeholders only.
+7. Ensure `.env`, private keys and certificate files are excluded by `.gitignore`.
+8. Preserve all existing application functionality.
+
+After implementation, list the files changed and explain how to configure the application locally.
+
+----********************Output Start *****************************---------------------------------------
+
+Implemented centralized environment configuration without modifying the populated .env.
+Key outcomes:
+- Added all requested canonical variables through pydantic-settings.
+- Added compatibility aliases for existing variable names.
+- Added FastAPI startup validation with a consolidated missing-variable message.
+- Added configurable CORS origins.
+- Replaced the hardcoded Windows RDS certificate path.
+- Replaced hardcoded application users/password hashes with protected AUTH_USERS_JSON.
+- Removed the frontend’s implicit backend URL fallback.
+- Made the frontend asset path independent of the working directory.
+- Expanded secret and certificate exclusions in .gitignore.
+Files changed:
+- [src/config.py](C:\\AIML_Projects\\WorkAssistAI\\src\\config.py)
+- [app/main.py](C:\\AIML_Projects\\WorkAssistAI\\app\\main.py)
+- [app/frontend_client.py](C:\\AIML_Projects\\WorkAssistAI\\app\\frontend_client.py)
+- [app/core/database.py](C:\\AIML_Projects\\WorkAssistAI\\app\\core\\database.py)
+- [app/core/security.py](C:\\AIML_Projects\\WorkAssistAI\\app\\core\\security.py)
+- [auth.py](C:\\AIML_Projects\\WorkAssistAI\\auth.py)
+- [app.py](C:\\AIML_Projects\\WorkAssistAI\\app.py)
+- [.env.example](C:\\AIML_Projects\\WorkAssistAI\\.env.example)
+- [.gitignore](C:\\AIML_Projects\\WorkAssistAI\\.gitignore)
+- [README.md](C:\\AIML_Projects\\WorkAssistAI\\README.md)
+- [tests/conftest.py](C:\\AIML_Projects\\WorkAssistAI\\tests\\conftest.py)
+- [tests/test_database.py](C:\\AIML_Projects\\WorkAssistAI\\tests\\test_database.py)
+- [tests/test_environment_settings.py](C:\\AIML_Projects\\WorkAssistAI\\tests\\test_environment_settings.py)
+Local configuration:
+1. Copy .env.example to .env.
+2. Replace every placeholder with a real local value.
+3. Set DATABASE_URL, for example:
+   mysql+pymysql://user:password@host:3306/database
+4. Download the AWS RDS global CA bundle and set DB_SSL_CA_PATH to its local path.
+5. Generate a random JWT_SECRET_KEY containing at least 32 characters.
+6. Configure AUTH_USERS_JSON as a JSON array whose records contain:
+   username, employee_id, password_salt, password_hash, and role.
+7. Use BACKEND_URL=http://localhost:8000 and ALLOWED_ORIGINS=http://localhost:8501 locally.
+8. Start the services:
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 3 — Make FastAPI production-ready
+Prepare the WorkAssist AI FastAPI backend for container deployment.
+
+Requirements:
+1. Make FastAPI listen on 0.0.0.0 and port 8000.
+2. Add a GET /health endpoint that returns:
+   {
+     "status": "healthy",
+     "service": "workassist-api"
+   }
+3. The health endpoint must not call OpenAI, Pinecone, S3 or MySQL.
+4. Configure CORS using the ALLOWED_ORIGINS environment variable.
+5. Do not use wildcard CORS when APP_ENV=production.
+6. Add structured application logging without exposing secrets or employee data.
+7. Handle database, Pinecone, S3 and OpenAI connection failures gracefully.
+8. Do not expose exception stack traces to frontend users.
+9. Preserve existing API routes and business logic.
+10. Add or update tests for the health endpoint and configuration validation.
+
+Run the relevant backend tests and report the results.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 4 — Prepare Streamlit for deployment
+Prepare the WorkAssist AI Streamlit frontend for Docker deployment.
+
+Requirements:
+1. Make Streamlit use the BACKEND_URL environment variable.
+2. Default BACKEND_URL to http://localhost:8000 for local development.
+3. In Docker, it must support http://backend:8000.
+4. Do not expose the internal backend URL anywhere in the user interface.
+5. Add reasonable HTTP connection and response timeouts.
+6. Show a friendly message when the FastAPI backend is unavailable.
+7. Do not expose stack traces, API keys or database details.
+8. Preserve login, RBAC, chat, PTO and escalation functionality.
+9. Add a Streamlit configuration file that:
+   - Listens on 0.0.0.0
+   - Uses port 8501
+   - Runs in headless mode
+   - Disables unnecessary usage-stat collection
+10. Do not change the existing visual design unless required for deployment.
+
+Run available frontend validation and report the files changed.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 5 — Review dependency files
+Review and correct the WorkAssist AI Python dependency configuration.
+
+Requirements:
+1. Identify whether the frontend and backend should use separate requirements files.
+2. Create:
+   - backend/requirements.txt
+   - frontend/requirements.txt
+   if the current structure supports separation.
+3. Include only packages required by each service.
+4. Use compatible, production-safe versions.
+5. Remove unused dependencies only when you can confirm they are not used.
+6. Make sure MySQL, boto3, Pinecone, OpenAI, LangChain, LangGraph, FastAPI, Uvicorn and Streamlit dependencies are represented where needed.
+7. Check whether any native build tools or Linux packages are required.
+8. Do not upgrade major package versions if doing so could break the application.
+9. Document any dependency compatibility concerns.
+
+Do not create Docker files yet. Run import validation after updating the dependencies.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 6 — Create Dockerfiles
+Dockerize the WorkAssist AI frontend and backend.
+
+Create:
+- backend/Dockerfile
+- frontend/Dockerfile
+- .dockerignore
+
+Backend requirements:
+1. Use an official supported Python slim image.
+2. Run FastAPI with Uvicorn on 0.0.0.0:8000.
+3. Install only required operating-system packages.
+4. Run as a non-root user.
+5. Include a Docker health check using /health.
+6. Do not copy `.env`, Git history, credentials, tests or unnecessary files.
+
+Frontend requirements:
+1. Use an official supported Python slim image.
+2. Run Streamlit on 0.0.0.0:8501.
+3. Run as a non-root user.
+4. Do not embed BACKEND_URL or secrets in the image.
+5. Add an appropriate container health check.
+
+Optimize image layers and build caching. Preserve all existing functionality.
+
+Build both images locally and fix any build or startup errors. Report image names, image sizes and verification results.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 7 — Create Docker Compose configuration
+Create a production-oriented docker-compose.yml for WorkAssist AI.
+
+Services:
+1. backend
+   - Build from backend/Dockerfile
+   - Internal port 8000
+   - Load configuration from `.env`
+   - Restart unless-stopped
+   - Include a health check
+2. frontend
+   - Build from frontend/Dockerfile
+   - Internal port 8501
+   - Set BACKEND_URL=http://backend:8000
+   - Start only after the backend is healthy
+   - Restart unless-stopped
+3. nginx
+   - Reverse proxy public requests to Streamlit
+   - Expose ports 80 and 443
+   - Do not publicly expose FastAPI port 8000
+   - Do not publicly expose Streamlit port 8501
+
+Requirements:
+- Use a private Docker network.
+- Do not add a MySQL container because the application uses Amazon RDS.
+- Do not store secrets directly in docker-compose.yml.
+- Add log rotation to prevent disk exhaustion.
+- Add named volumes only where persistence is necessary.
+
+Also create an optional docker-compose.local.yml for local development without Nginx.
+
+Validate the Compose configuration and report the commands for starting and stopping it.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 8 — Configure Nginx
+Create an Nginx reverse-proxy configuration for WorkAssist AI.
+
+Requirements:
+1. Forward browser traffic to the Streamlit frontend on frontend:8501.
+2. Support Streamlit WebSocket connections.
+3. Preserve forwarded host, protocol and client IP headers.
+4. Configure reasonable connection and read timeouts for AI responses.
+5. Set a safe request-body size limit.
+6. Add standard security headers.
+7. Redirect HTTP to HTTPS when a certificate is available.
+8. Do not expose FastAPI directly to the internet.
+9. Include a temporary HTTP-only configuration that can be used before the TLS certificate is generated.
+10. Make the domain name configurable or clearly mark the placeholder WORKASSIST_DOMAIN.
+
+Create concise documentation explaining how to switch from temporary HTTP configuration to HTTPS.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 9 — Configure AWS access securely
+Update WorkAssist AI to use an EC2 IAM role for Amazon S3 access.
+
+Requirements:
+1. Use boto3's default credential-provider chain.
+2. Do not require AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY in production.
+3. Continue supporting a local AWS profile for development.
+4. Use AWS_REGION and S3_BUCKET_NAME from configuration.
+5. Add clear error handling for:
+   - Access denied
+   - Missing object
+   - Missing bucket
+   - Network failure
+6. Do not log document content, credentials or signed URLs.
+7. Identify the minimum S3 IAM permissions needed by the application.
+8. Generate an example IAM policy restricted to the specific WorkAssist AI bucket.
+9. If document synchronization writes objects, separate read-only and read/write permissions.
+
+Save the example policy under deployment/aws/ec2-s3-policy.json, using placeholder bucket values. Run existing S3-related tests.
+
+------------------------------------------------------------------------------------------------------
+
+
+Prompt 10 — Secure the RDS connection
+Review and improve the Amazon RDS MySQL connection used by WorkAssist AI.
+
+Requirements:
+1. Read the connection string from DATABASE_URL.
+2. Use SQLAlchemy connection pooling suitable for a small EC2 deployment.
+3. Enable pool_pre_ping.
+4. Configure conservative pool size, overflow and recycle values.
+5. Use parameterized SQL or SQLAlchemy expressions everywhere.
+6. Do not log connection strings, passwords, employee details or PTO details.
+7. Handle expired connections gracefully.
+8. Support encrypted MySQL connections when required.
+9. Add a separate readiness check that validates database connectivity.
+10. Do not include database connectivity in the basic /health endpoint.
+11. Preserve the current database schema and data.
+12. Do not run destructive schema changes.
+
+Provide the recommended RDS security-group rule: MySQL port 3306 must accept traffic only from the EC2 security group.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 11 — Add deployment scripts
+Create safe deployment support files for an Ubuntu EC2 server.
+
+Create:
+- deployment/aws/setup-ec2.sh
+- deployment/aws/deploy.sh
+- deployment/aws/backup-config.example.sh
+- deployment/aws/README.md
+
+Requirements:
+1. setup-ec2.sh should install Docker Engine, Docker Compose and required utilities.
+2. It must not install or configure a database.
+3. deploy.sh should:
+   - Pull the latest code
+   - Build updated containers
+   - Validate configuration
+   - Start containers
+   - Wait for health checks
+   - Show deployment status
+4. Do not delete Docker volumes.
+5. Do not delete images currently used by running containers.
+6. Stop deployment and retain the previous running version if the new containers fail their health checks.
+7. Scripts must use `set -euo pipefail`.
+8. Never print secrets.
+9. README must contain exact commands but no real credentials.
+10. Clearly distinguish commands executed locally from commands executed on EC2.
+
+Validate the shell scripts using shellcheck if available.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 12 — Create the AWS deployment guide
+Create a step-by-step AWS EC2 deployment guide for WorkAssist AI.
+
+Target configuration:
+- Region: us-east-2 because the current S3 resources are in Ohio
+- Ubuntu LTS
+- EC2 type: t3.small
+- 25 GB gp3 EBS
+- Docker Compose
+- Nginx
+- Amazon RDS MySQL
+- Amazon S3
+- Pinecone
+- OpenAI
+- Route 53 optional
+- Let's Encrypt HTTPS
+- AWS Free Plan credits
+
+The guide must explain:
+1. Creating the EC2 instance.
+2. Creating and attaching the IAM role.
+3. Configuring the EC2 security group.
+4. Allowing SSH only from the administrator's IP.
+5. Allowing ports 80 and 443 publicly.
+6. Keeping ports 8000, 8501 and 3306 private.
+7. Allowing RDS port 3306 only from the EC2 security group.
+8. Connecting to EC2.
+9. Cloning the repository.
+10. Creating the production `.env`.
+11. Starting Docker Compose.
+12. Testing the health endpoint internally.
+13. Testing Streamlit through the browser.
+14. Configuring DNS.
+15. Installing the TLS certificate.
+16. Enabling container restart after reboot.
+17. Viewing logs.
+18. Deploying later updates.
+19. Rolling back a failed update.
+20. Stopping resources to conserve AWS credits.
+
+Do not include real credentials, account numbers or API keys.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 13 — Add automated tests
+Create a deployment-focused test plan and implement safe automated tests where practical.
+
+Validate:
+1. Backend /health response.
+2. Backend readiness behavior.
+3. Configuration validation.
+4. Streamlit-to-FastAPI connectivity.
+5. Authentication.
+6. Admin and employee RBAC.
+7. PTO queries use MySQL.
+8. Policy questions use RAG and Pinecone.
+9. S3 synchronization authorization.
+10. Human escalation.
+11. CORS restrictions.
+12. Secrets are not included in Docker images.
+13. Ports 8000, 8501 and 3306 are not publicly published.
+14. Containers restart successfully.
+15. Logs do not expose secrets.
+
+Mock external systems during automated tests. Do not modify production S3, RDS, Pinecone or OpenAI data.
+
+Run the full available test suite and provide a pass/fail summary.
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 14 — Final predeployment review
+Perform a final production-readiness review of WorkAssist AI.
+
+Review:
+- Application configuration
+- Dockerfiles
+- Docker Compose
+- Nginx
+- IAM policy
+- S3 access
+- RDS security
+- Authentication and RBAC
+- Secrets management
+- Logging
+- Health checks
+- Deployment scripts
+- Documentation
+- Automated tests
+
+Search the repository for:
+- API keys
+- Passwords
+- Private keys
+- AWS account identifiers
+- Public database endpoints
+- Hardcoded localhost URLs
+- Published internal ports
+- Insecure wildcard CORS
+- Debug mode
+- Personally identifiable employee data
+
+Do not expose discovered secret values in the response.
+
+Fix low-risk deployment issues. For any change that could affect business logic or data, explain the proposed change instead of making it automatically.
+
+Finish with:
+1. Deployment readiness: Ready or Not Ready
+2. Blocking issues
+3. Non-blocking recommendations
+4. Exact local validation commands
+5. Exact first-deployment commands
+6. Rollback procedure
+
+------------------------------------------------------------------------------------------------------
+
+Prompt 15 — Generate the EC2 launch checklist
+Based on the completed WorkAssist AI deployment configuration, give me an interactive EC2 launch checklist.
+
+Present only one deployment stage at a time. For each stage:
+1. Tell me exactly where to navigate in the AWS Console.
+2. Tell me exactly which values to enter.
+3. Explain what I should see after saving.
+4. Ask me to provide a screenshot before proceeding.
+5. Do not request that I share passwords, API keys, private keys or complete database connection strings.
+6. Check that the selected AWS service is available under my current AWS Free Plan before instructing me to create it.
+7. Prefer configurations that conserve my remaining $133.92 AWS credit.
+
+Start with verifying the AWS region and existing S3 and RDS resources. Do not sta
