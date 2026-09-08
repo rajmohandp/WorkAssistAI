@@ -38,7 +38,28 @@ def test_health_endpoint():
     assert response.status_code == 200
     assert response.json() == {
         "status": "healthy",
-        "application": "WorkAssist AI",
+        "service": "workassist-api",
+    }
+
+
+def test_health_endpoint_does_not_call_external_services(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("The health endpoint called an external service")
+
+    monkeypatch.setattr("app.api.routes.s3_service.status", fail_if_called)
+    monkeypatch.setattr("app.api.routes.pinecone_service.status", fail_if_called)
+    monkeypatch.setattr("app.api.routes.rag_service.answer", fail_if_called)
+    monkeypatch.setattr(
+        "app.core.database.check_database_health",
+        fail_if_called,
+    )
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "healthy",
+        "service": "workassist-api",
     }
 
 
@@ -47,6 +68,38 @@ def test_versioned_health_endpoint_remains_available():
 
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
+
+
+def test_readiness_endpoint_checks_database(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.api.routes.check_database_health", lambda: calls.append("checked") or True
+    )
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "service": "workassist-api",
+        "database": "reachable",
+    }
+    assert calls == ["checked"]
+
+
+def test_readiness_endpoint_returns_safe_503(monkeypatch):
+    from app.core.database import DatabaseConnectionError
+
+    def unavailable():
+        raise DatabaseConnectionError("sensitive database provider detail")
+
+    monkeypatch.setattr("app.api.routes.check_database_health", unavailable)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "The service is not ready."}
+    assert "sensitive" not in response.text
 
 
 def test_repository_status_includes_available_document_names(monkeypatch):

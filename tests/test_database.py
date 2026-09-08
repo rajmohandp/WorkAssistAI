@@ -54,16 +54,23 @@ def test_database_url_escapes_and_hides_password():
 def test_engine_uses_pool_pre_ping_and_verified_tls(monkeypatch):
     create_engine = MagicMock(return_value=MagicMock())
     monkeypatch.setattr("app.core.database.create_engine", create_engine)
+    monkeypatch.setenv(
+        "DATABASE_URL", "mysql+pymysql://readonly:secret@db.example/workassist"
+    )
+    monkeypatch.setenv("DB_SSL_CA_PATH", "/run/secrets/global-bundle.pem")
 
-    create_database_engine(database_settings())
+    create_database_engine()
 
     kwargs = create_engine.call_args.kwargs
     assert kwargs["pool_pre_ping"] is True
-    assert kwargs["pool_size"] == 5
-    assert kwargs["max_overflow"] == 10
+    assert kwargs["pool_size"] == 3
+    assert kwargs["max_overflow"] == 2
+    assert kwargs["pool_recycle"] == 900
+    assert kwargs["pool_timeout"] == 10
     assert kwargs["echo"] is False
+    assert kwargs["hide_parameters"] is True
     tls_options = kwargs["connect_args"]["ssl"]
-    assert tls_options["ca"].endswith(r"certs\global-bundle.pem")
+    assert tls_options["ca"] == "/run/secrets/global-bundle.pem"
     assert tls_options["verify_mode"] is not False
     assert tls_options["check_hostname"] is True
 
@@ -95,3 +102,21 @@ def test_database_health_wraps_provider_errors():
 
     with pytest.raises(DatabaseConnectionError, match="database is unavailable"):
         check_database_health(session)
+
+    session.rollback.assert_called_once_with()
+
+
+def test_database_health_invalidates_expired_connection():
+    session = MagicMock()
+    session.execute.side_effect = OperationalError(
+        "SELECT 1",
+        {},
+        Exception(),
+        connection_invalidated=True,
+    )
+
+    with pytest.raises(DatabaseConnectionError):
+        check_database_health(session)
+
+    session.rollback.assert_called_once_with()
+    session.invalidate.assert_called_once_with()

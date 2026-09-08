@@ -11,7 +11,7 @@ from typing import Any
 import streamlit as st
 
 from app.frontend_client import (
-    API_BASE_URL,
+    BACKEND_UNAVAILABLE_MESSAGE,
     DocuVerseAPIError,
     ask_question_http,
     get_current_user_http,
@@ -42,7 +42,9 @@ def get_base64_image(image_path: str) -> str:
     return base64.b64encode(Path(image_path).read_bytes()).decode("ascii")
 
 
-background = get_base64_image("assets/docuverse_background.png")
+background = get_base64_image(
+    str(Path(__file__).resolve().parent / "assets" / "docuverse_background.png")
+)
 
 st.markdown(
     f"""
@@ -129,8 +131,13 @@ def render_login() -> None:
                 "Admin" if is_admin(st.session_state) else "Chat"
             )
             st.rerun()
-        except DocuVerseAPIError:
-            st.error("Invalid username or password.")
+        except DocuVerseAPIError as exc:
+            message = str(exc)
+            st.error(
+                message
+                if message == BACKEND_UNAVAILABLE_MESSAGE
+                else "Invalid username or password."
+            )
 
 
 if not is_authenticated(st.session_state) or not st.session_state.get("access_token"):
@@ -339,7 +346,6 @@ with st.sidebar:
             st.error("Pinecone: unavailable")
 
     st.divider()
-    st.caption(f"API: {API_BASE_URL}")
     if selected_mode == "Chat" and st.button(
         "Clear Conversation",
         use_container_width=True,

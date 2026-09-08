@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from typing import Annotated
 
-from pydantic import AliasChoices, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_CHUNK_OVERLAP = 200
@@ -30,11 +32,22 @@ class EnvironmentSettings(BaseSettings):
         case_sensitive=False,
     )
 
+    app_env: str = "development"
+    backend_url: str = Field(
+        default="http://localhost:8000",
+        validation_alias=AliasChoices(
+            "BACKEND_URL", "FASTAPI_URL", "DOCUVERSE_API_URL"
+        ),
+    )
     openai_api_key: SecretStr = SecretStr("")
     pinecone_api_key: SecretStr = SecretStr("")
     pinecone_index_name: str = ""
+    pinecone_cloud: str = ""
+    pinecone_region: str = ""
+    aws_profile: str = ""
     aws_access_key_id: SecretStr = SecretStr("")
     aws_secret_access_key: SecretStr = SecretStr("")
+    aws_session_token: SecretStr = SecretStr("")
     aws_region: str = Field(
         default="",
         validation_alias=AliasChoices("AWS_REGION", "AWS_DEFAULT_REGION"),
@@ -42,10 +55,6 @@ class EnvironmentSettings(BaseSettings):
     s3_bucket_name: str = Field(
         default="",
         validation_alias=AliasChoices("S3_BUCKET_NAME", "AWS_S3_BUCKET"),
-    )
-    fastapi_url: str = Field(
-        default="http://localhost:8000",
-        validation_alias=AliasChoices("FASTAPI_URL", "DOCUVERSE_API_URL"),
     )
     docuverse_api_prefix: str = "/api/v1"
     chunk_size: int = DEFAULT_CHUNK_SIZE
@@ -63,13 +72,74 @@ class EnvironmentSettings(BaseSettings):
     retrieval_min_score: float = DEFAULT_RETRIEVAL_MIN_SCORE
     log_level: str = "INFO"
     rag_evaluation_enabled: bool = False
+    database_url: SecretStr = SecretStr("")
+    db_ssl_ca_path: str = ""
     db_host: str = ""
     db_port: int = 0
     db_name: str = ""
     db_user: str = ""
     db_password: SecretStr = SecretStr("")
-    auth_token_secret: SecretStr = SecretStr("")
+    jwt_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("JWT_SECRET_KEY", "AUTH_TOKEN_SECRET"),
+    )
+    auth_users_json: SecretStr = SecretStr("")
     auth_token_ttl_seconds: int = 1800
+    allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, value: object) -> object:
+        """Accept either a comma-separated environment value or a JSON list."""
+
+        if isinstance(value, str):
+            if value.lstrip().startswith("["):
+                return json.loads(value)
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @property
+    def fastapi_url(self) -> str:
+        """Backward-compatible name for the frontend's backend endpoint."""
+
+        return self.backend_url
+
+    @property
+    def auth_token_secret(self) -> SecretStr:
+        """Backward-compatible name for the token signing secret."""
+
+        return self.jwt_secret_key
+
+    def validate_backend_startup(self) -> None:
+        """Fail early with a single clear list of missing backend settings."""
+
+        required = {
+            "OPENAI_API_KEY": self.openai_api_key.get_secret_value(),
+            "PINECONE_API_KEY": self.pinecone_api_key.get_secret_value(),
+            "PINECONE_INDEX_NAME": self.pinecone_index_name,
+            "AWS_REGION": self.aws_region,
+            "S3_BUCKET_NAME": self.s3_bucket_name,
+            "DATABASE_URL": self.database_url.get_secret_value(),
+            "DB_SSL_CA_PATH": self.db_ssl_ca_path,
+            "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
+            "AUTH_USERS_JSON": self.auth_users_json.get_secret_value(),
+        }
+        missing = [name for name, value in required.items() if not str(value).strip()]
+        if missing:
+            raise RuntimeError(
+                "Missing required environment variables: " + ", ".join(missing)
+            )
+        if len(self.jwt_secret_key.get_secret_value()) < 32:
+            raise RuntimeError("JWT_SECRET_KEY must contain at least 32 characters.")
+        self.validate_cors_configuration()
+
+    def validate_cors_configuration(self) -> None:
+        """Reject permissive browser access in production deployments."""
+
+        if self.app_env.strip().casefold() == "production" and "*" in self.allowed_origins:
+            raise RuntimeError(
+                "ALLOWED_ORIGINS cannot contain '*' when APP_ENV=production."
+            )
 
 
 def get_environment_settings() -> EnvironmentSettings:

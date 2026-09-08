@@ -1,5 +1,14 @@
 # Secrets and local configuration
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+deployment/aws/backup-config.sh
+*.p12
+*.pfx
+*.crt
+*.cer
 
 # Python
 __pycache__/

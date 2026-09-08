@@ -1,0 +1,23 @@
+# Direct runtime dependencies for the FastAPI, agent, RAG, and ingestion service.
+# Versions match the tested project lock/environment; update deliberately as a set.
+boto3==1.43.75
+botocore==1.43.75
+docx2txt==0.9
+fastapi==0.141.1
+itsdangerous==2.2.0
+langchain-community==0.4.2
+langchain-core==1.6.0
+langchain-groq==1.1.3
+langchain-openai==1.6.0
+langchain-pinecone==0.2.13
+langchain-text-splitters==1.1.2
+langgraph==1.2.11
+pinecone==7.3.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pymysql==1.2.0
+pypdf==6.16.1
+python-dotenv==1.2.3
+sqlalchemy==2.0.52
+starlette==1.6.0
+uvicorn[standard]==0.52.4

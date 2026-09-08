@@ -60,6 +60,27 @@ def test_logging_configuration_is_idempotent():
     assert len(structured_handlers) == 1
 
 
+def test_structured_formatter_redacts_employee_fields():
+    record = logging.LogRecord(
+        name="app.test",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=10,
+        msg="Request handled",
+        args=(),
+        exc_info=None,
+    )
+    record.username = "private-user"
+    record.employee_id = "EMP-SECRET"
+    record.question = "private employee question"
+
+    output = StructuredJsonFormatter().format(record)
+
+    assert "private-user" not in output
+    assert "EMP-SECRET" not in output
+    assert "private employee question" not in output
+
+
 def test_api_middleware_logs_received_and_completed_without_body(monkeypatch):
     events = []
 

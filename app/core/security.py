@@ -25,9 +25,9 @@ class AuthenticatedUser:
 
 def _token_configuration() -> tuple[URLSafeTimedSerializer, int]:
     settings = get_environment_settings()
-    secret = settings.auth_token_secret.get_secret_value()
+    secret = settings.jwt_secret_key.get_secret_value()
     if len(secret) < 32:
-        raise RuntimeError("AUTH_TOKEN_SECRET must contain at least 32 characters.")
+        raise RuntimeError("JWT_SECRET_KEY must contain at least 32 characters.")
     if settings.auth_token_ttl_seconds <= 0:
         raise RuntimeError("AUTH_TOKEN_TTL_SECONDS must be greater than zero.")
     return URLSafeTimedSerializer(secret, salt=TOKEN_SALT), settings.auth_token_ttl_seconds
