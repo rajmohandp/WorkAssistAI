@@ -3,21 +3,85 @@ SELECT user_name,
     employee_id,
     employee_name,
     pto_type,
-    balance_year	
+    balance_year,    
+    available_hours,
+    last_updated,
+    accrued_hours,
+    used_hours,
+    pending_hours,
+    adjusted_hours	
 FROM docuverse.employee_pto_balances
-
---    available_hours,
---    last_updated,
---    accrued_hours,
---    used_hours,
---    pending_hours,
---    adjusted_hours
-
 -----------------------------------------------------------
+create table docuverse.employee_health_records
+(
+user_name       VARCHAR2(300),
+employee_id     VARCHAR2(100),
+employee_name   VARCHAR2(300),
+age             NUMBER,
+medical_history VARCHAR2(10),
+family_history VARCHAR2(10),
+bmi  NUMBER
+)
+
+CREATE TABLE docuverse.employee_health_records (
+    employee_id     VARCHAR(100) PRIMARY KEY,
+    employee_name   VARCHAR(300) NOT NULL,
+    user_name       VARCHAR(300),
+    age             INT,
+    medical_history VARCHAR(10),
+    family_history  VARCHAR(10),
+    bmi             DECIMAL(5,2)
+);
+
+INSERT INTO docuverse.employee_health_records
+(
+    employee_id,
+    employee_name,
+    user_name,
+    age,
+    medical_history,
+    family_history,
+    bmi
+)
+VALUES
+(
+    'EMP001',
+    'John Smith',
+    'USER01',
+    38,
+    'Hypertension',
+    'Diabetes',
+    26.40
+);
+
+INSERT INTO docuverse.employee_health_records
+(
+    employee_id,
+    employee_name,
+    user_name,
+    age,
+    medical_history,
+    family_history,
+    bmi
+)
+VALUES
+(
+    'EMP002',
+    'Sarah Johnson',
+    'USER02',
+    34,
+    'Asthma',
+    'Hypertension',
+    23.80
+);
+
+commit;
 
 
 
 
+
+SELECT * FROM docuverse.employee_health_records
 
 USE docuverse;
 

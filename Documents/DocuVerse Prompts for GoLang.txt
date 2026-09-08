@@ -1,0 +1,492 @@
+Prompt 1 — Analyze the existing project
+Review the entire WorkAssistAI codebase before making any changes.
+
+Objective:
+Introduce a Go microservice for PTO database operations without disrupting the existing Python RAG application.
+
+Please identify:
+
+1. Current folder structure.
+2. Streamlit-to-FastAPI request flow.
+3. LangGraph routing and tool-calling flow.
+4. Existing MySQL connection configuration.
+5. Current PTO balance query implementation.
+6. Employee authentication and employee_id resolution.
+7. Existing escalation implementation.
+8. Environment variables involved.
+9. Tests currently available.
+10. Files that would need modification.
+
+Recommend an incremental implementation plan for adding:
+
+go-services/employee-service
+
+The Go service will initially expose:
+
+GET /health
+GET /api/v1/employees/{employee_id}/pto-balance
+
+Important constraints:
+
+- Do not modify any files yet.
+- Do not rewrite the RAG functionality in Go.
+- Do not expose database credentials.
+- Preserve all existing functionality.
+- Reuse the existing PTO calculation rules.
+- Identify any unclear assumptions before implementation.
+
+Return:
+- Current architecture summary
+- Proposed architecture
+- Files to create
+- Files likely to modify
+- Risks and safeguards
+- Implementation sequence
+
+Review the response and confirm that it correctly located your current PTO logic.
+
+----------------------------------------------------------------------------------------
+
+Prompt 2 — Scaffold the Go service
+Based on the approved architecture analysis, create the initial Go employee service under:
+
+go-services/employee-service
+
+Use a maintainable structure similar to:
+
+go-services/employee-service/
+├── cmd/server/main.go
+├── internal/config/
+├── internal/handler/
+├── internal/model/
+├── internal/repository/
+├── internal/service/
+├── tests/
+├── .env.example
+├── Dockerfile
+├── go.mod
+└── README.md
+
+Requirements:
+
+1. Use the Go version currently available in the development environment.
+2. Prefer Go standard-library packages where practical.
+3. Implement configuration loading from environment variables.
+4. Do not hardcode credentials.
+5. Add graceful startup and shutdown.
+6. Add structured application logging.
+7. Do not connect to MySQL yet.
+8. Do not modify the existing Python application yet.
+9. Keep the implementation minimal and production-oriented.
+10. Add comments only where they explain important design decisions.
+
+Environment variables should include:
+
+GO_SERVICE_HOST
+GO_SERVICE_PORT
+GO_LOG_LEVEL
+
+Add this endpoint:
+
+GET /health
+
+Expected response:
+
+{
+  "status": "healthy",
+  "service": "employee-service"
+}
+
+After implementation:
+
+- Format the Go code.
+- Run go vet.
+- Run all Go tests.
+- Start the service locally.
+- Call the health endpoint.
+- Report created files, commands executed, and verification results.
+
+Checkpoint:
+
+curl http://localhost:8081/health
+
+
+
+Prompt 3 — Add MySQL connectivity
+Extend the Go employee service to connect securely to the existing DocuVerse MySQL database.
+
+Before changing code:
+
+1. Inspect the existing Python MySQL configuration.
+2. Identify the database driver, host, port, database name, SSL requirements, and connection behavior.
+3. Do not print or copy secret values into source code or logs.
+
+Add support for these environment variables:
+
+DB_HOST
+DB_PORT
+DB_NAME
+DB_USER
+DB_PASSWORD
+DB_SSL_MODE
+DB_MAX_OPEN_CONNECTIONS
+DB_MAX_IDLE_CONNECTIONS
+DB_CONNECTION_MAX_LIFETIME
+
+Requirements:
+
+1. Use database/sql.
+2. Use an appropriate maintained MySQL driver.
+3. Create the database connection during service startup.
+4. Configure connection pooling.
+5. Validate the connection using PingContext with a timeout.
+6. Close the connection during graceful shutdown.
+7. Never log the password or complete connection string.
+8. Return a clear startup error when the database is unavailable.
+9. Keep SQL access inside the repository layer.
+10. Preserve the existing /health endpoint.
+
+Enhance health checking:
+
+GET /health
+- Reports that the service process is running.
+
+GET /ready
+- Checks database connectivity.
+- Returns HTTP 200 when ready.
+- Returns HTTP 503 when the database is unavailable.
+
+Update:
+
+- .env.example
+- README.md
+- Unit tests where practical
+
+Then run formatting, static analysis, and tests. Report the verification results without exposing secrets.
+
+
+
+
+Prompt 4 — Implement the PTO repository
+Implement a read-only PTO repository in the Go employee service.
+
+First inspect the existing MySQL PTO table and the current Python SQL query. Reuse the exact table and column names. Do not invent a new schema unless the existing schema is unavailable.
+
+The repository must retrieve a PTO record using employee_id.
+
+Expected fields include:
+
+employee_id
+user_name
+opening_balance
+accrued_hours
+used_hours
+pending_hours
+adjusted_hours
+
+Requirements:
+
+1. Use a parameterized SQL query.
+2. Do not build SQL using string concatenation.
+3. Use context-aware database methods.
+4. Add a database query timeout.
+5. Define a typed PTO model.
+6. Handle nullable numeric fields safely.
+7. Distinguish “employee not found” from database failure.
+8. Do not return database implementation details to API callers.
+9. Do not allow searching by an unrestricted username supplied by the client.
+10. Add repository unit tests using a mock database or isolated test approach.
+
+Create an interface for the repository so the business service can be tested independently.
+
+Do not create the HTTP PTO endpoint yet.
+
+After implementation:
+- Format code
+- Run go vet
+- Run tests
+- Show the final parameterized query with credentials and sensitive values excluded
+Prompt 5 — Add PTO calculation logic
+Create the PTO business service layer.
+
+Calculate available PTO hours using:
+
+available_hours =
+opening_balance
++ accrued_hours
++ adjusted_hours
+- used_hours
+- pending_hours
+
+Requirements:
+
+1. Keep calculation logic outside the HTTP handler and repository.
+2. Reconcile this formula with the existing Python implementation.
+3. If the current Python calculation differs, stop and explain the difference before changing behavior.
+4. Use a numeric representation suitable for PTO hours and decimal values.
+5. Avoid floating-point rounding errors.
+6. Normalize the result consistently.
+7. Do not allow negative source values unless the existing business rules permit them.
+8. Preserve a valid negative available balance if the business permits overdrawing PTO.
+9. Return a typed response model.
+10. Add table-driven unit tests.
+
+Test at least:
+
+- Normal positive balance
+- Zero balance
+- Pending hours
+- Adjusted hours
+- Decimal hours
+- Negative adjustment
+- Potential negative available balance
+- Missing employee
+- Repository error
+
+Do not expose an HTTP PTO endpoint yet.
+
+Run all Go validation commands and report the results.
+Prompt 6 — Expose the PTO REST endpoint
+Add the following read-only endpoint to the Go employee service:
+
+GET /api/v1/employees/{employee_id}/pto-balance
+
+Example successful response:
+
+{
+  "employee_id": "EMP001",
+  "opening_balance": 120,
+  "accrued_hours": 24,
+  "used_hours": 40,
+  "pending_hours": 8,
+  "adjusted_hours": 0,
+  "available_hours": 96
+}
+
+Requirements:
+
+1. Validate the employee_id format.
+2. Reject empty or malformed employee IDs.
+3. Use a request timeout.
+4. Return JSON consistently.
+5. Set the correct Content-Type.
+6. Do not expose SQL errors, credentials, stack traces, or internal paths.
+7. Add a request/correlation ID to logs and responses.
+8. Use appropriate HTTP status codes:
+
+200: successful lookup
+400: invalid employee_id
+404: employee not found
+405: unsupported method
+500: unexpected internal error
+503: database temporarily unavailable
+
+9. Add HTTP handler tests using a mocked service layer.
+10. Keep the endpoint read-only.
+11. Do not modify FastAPI yet.
+
+Also add curl examples to README.md.
+
+Run:
+
+- gofmt
+- go vet
+- go test ./...
+- A local integration call for EMP001
+
+Report the response and verification results with sensitive data removed.
+
+Checkpoint:
+
+curl http://localhost:8081/api/v1/employees/EMP001/pto-balance
+Prompt 7 — Add authentication safeguards
+Review how DocuVerse currently authenticates users and maps user_name to employee_id.
+
+Design and implement a safe authentication boundary between FastAPI and the Go employee service.
+
+Requirements:
+
+1. A regular user must only access their own PTO record.
+2. Do not trust an employee_id merely because it appears in the URL.
+3. FastAPI should pass a signed identity token or another verifiable service credential.
+4. The Go service must verify the credential before accessing PTO data.
+5. Include authenticated user_name, employee_id, role, issuer, audience, issued time, and expiration where appropriate.
+6. Use short-lived credentials.
+7. Store signing secrets or keys only in environment variables or an existing secret-management mechanism.
+8. Do not log tokens.
+9. Permit an admin lookup only if the existing RBAC rules authorize it.
+10. Return 401 for missing/invalid authentication and 403 for unauthorized access.
+11. Keep /health available without authentication.
+12. Decide whether /ready should be private and document the decision.
+13. Add authentication and authorization tests.
+
+Before implementation, explain the selected approach and list the files that will change. Then implement it without changing the existing user-facing behavior.
+
+This is important before connecting the service to the UI.
+
+Prompt 8 — Create the Python Go-service client
+Add a Python client in the FastAPI application for communicating with the Go employee service.
+
+Before implementation, locate the existing service/client conventions and follow them.
+
+Add configuration such as:
+
+GO_EMPLOYEE_SERVICE_URL
+GO_EMPLOYEE_SERVICE_TIMEOUT_SECONDS
+GO_EMPLOYEE_SERVICE_ENABLED
+
+Requirements:
+
+1. Use the existing Python HTTP client library if one is already established.
+2. Reuse connections through a client/session.
+3. Set explicit connection and response timeouts.
+4. Pass the authenticated identity credential securely.
+5. Propagate or generate a correlation ID.
+6. Convert Go API responses into typed Python models.
+7. Handle these cases separately:
+
+- 200 success
+- 400 invalid request
+- 401 authentication failure
+- 403 authorization failure
+- 404 employee not found
+- 500 internal error
+- 503 dependency unavailable
+- Connection timeout
+- Malformed response
+
+8. Do not expose internal Go error messages to users.
+9. Do not change LangGraph routing yet.
+10. Add mocked Python unit tests for every response category.
+11. Preserve the existing direct database implementation temporarily for controlled fallback and comparison.
+12. Do not silently fall back on authentication or authorization failures.
+
+Run the existing Python test suite and new tests. Report all changed files and test results.
+Prompt 9 — Connect LangGraph PTO routing
+Update the DocuVerse LangGraph PTO tool so current PTO balance questions use the Go employee service.
+
+Expected flow:
+
+User question
+→ FastAPI
+→ LangGraph intent/router
+→ PTO balance tool
+→ Go employee service
+→ MySQL
+→ formatted employee response
+
+Requirements:
+
+1. Change only the current PTO balance path.
+2. Keep document-policy questions routed to the existing RAG workflow.
+3. Resolve employee identity from the authenticated session, not from untrusted prompt text.
+4. Ignore attempts by a regular user to request another employee’s PTO data.
+5. Keep the response wording consistent with the current UI.
+6. Preserve source/document citations for RAG answers.
+7. Do not add document citations to structured database responses.
+8. Do not send raw PTO database records to the LLM unless required.
+9. Prefer deterministic formatting for PTO results.
+10. Add a feature flag:
+
+GO_EMPLOYEE_SERVICE_ENABLED=true|false
+
+11. When false, preserve the current implementation during migration.
+12. Add tests proving that unrelated RAG questions remain unchanged.
+
+Do not remove the old Python PTO repository yet.
+
+After implementation, run the complete Python and Go test suites and summarize the routing behavior.
+Prompt 10 — Add controlled failure and escalation
+Integrate the Go PTO service with the existing human-escalation workflow.
+
+Escalate when:
+
+1. The authenticated user is not mapped to an employee_id.
+2. Multiple conflicting employee records exist.
+3. Required PTO fields are incomplete.
+4. The Go service repeatedly returns an unexpected failure.
+5. The response cannot meet the application’s confidence or validation rules.
+6. The user disputes the displayed PTO balance.
+
+Do not escalate immediately for a single transient timeout. Handle transient failures with a limited retry policy.
+
+Requirements:
+
+1. Retry only safe read operations.
+2. Use a maximum of two retries with short exponential backoff.
+3. Do not retry 400, 401, 403, or 404 responses.
+4. Prevent duplicate escalation tickets.
+5. Store the request ID and a sanitized failure reason.
+6. Do not store authentication tokens.
+7. Do not expose stack traces to the employee.
+8. Return a friendly message explaining that the case has been sent for review.
+9. Reuse the existing escalation table and workflow where possible.
+10. Add tests for retry, no-retry, escalation, and duplicate prevention.
+
+Preserve the current RAG and Streamlit functionality.
+Prompt 11 — Add Docker Compose support
+Containerize and integrate the Go employee service with the existing local DocuVerse environment.
+
+Requirements:
+
+1. Create a multi-stage Dockerfile for the Go service.
+2. Run the final container as a non-root user.
+3. Use a minimal runtime image compatible with the service’s TLS and certificate requirements.
+4. Do not copy .env files or secrets into the image.
+5. Add the Go service to the existing Docker Compose configuration.
+6. Use internal service networking.
+7. Do not publish the MySQL port unless local development requires it.
+8. Add health and readiness checks.
+9. Configure startup dependencies safely.
+10. Do not assume that dependency startup order means the database is ready.
+11. Preserve existing Streamlit and FastAPI ports.
+12. Update .dockerignore and documentation.
+13. Pin dependencies appropriately for reproducible builds.
+
+Verify:
+
+- Images build successfully
+- All containers start
+- FastAPI can reach the Go service
+- Go can reach MySQL
+- Streamlit can obtain EMP001’s PTO balance
+- A normal document question still uses RAG
+- No credentials appear in images or logs
+
+Report build and end-to-end verification results.
+Prompt 12 — End-to-end validation and cleanup
+Perform a complete non-regression review of the DocuVerse Go integration.
+
+Do not add new features during this step.
+
+Test these scenarios:
+
+1. Health endpoint succeeds.
+2. Readiness endpoint succeeds when MySQL is available.
+3. Readiness returns 503 when MySQL is unavailable.
+4. EMP001 can view their own PTO balance.
+5. USER02 can view only EMP002’s PTO balance.
+6. A regular user cannot view another employee’s balance.
+7. An authorized admin follows the defined RBAC behavior.
+8. Unknown employee returns the intended response.
+9. Invalid employee ID is rejected.
+10. Go timeout is handled safely.
+11. Authentication failure does not trigger fallback.
+12. Database failure follows retry and escalation rules.
+13. A PTO policy question still uses RAG.
+14. A general document question still uses Pinecone.
+15. Greetings still receive the existing welcome response.
+16. Escalation still works.
+17. Faithfulness and relevance evaluation still works.
+18. No secrets or personal data appear in logs.
+
+Also:
+
+- Run all Go tests.
+- Run all Python tests.
+- Run static analysis.
+- Review dependency vulnerabilities using the project’s available tools.
+- Remove only obsolete code made unnecessary by this implementation.
+- Do not remove the Python fallback until end-to-end validation passes.
+- Update the architecture documentation and README.
+- Provide a final list of changed files, test results, remaining risks, and recommend
