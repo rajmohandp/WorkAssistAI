@@ -67,6 +67,7 @@ async def resolve_employee(state: AgentState) -> dict[str, object]:
 
     clarification_question = get_pto_clarification_question(state)
     effective_question = clarification_question or state["question"]
+    balance_question = state["balance_question"] or effective_question
     explicit_match = _EMPLOYEE_ID_PATTERN.search(effective_question)
     explicit_employee_id = explicit_match.group(0).upper() if explicit_match else None
     authenticated_employee_id = (
@@ -93,10 +94,14 @@ async def resolve_employee(state: AgentState) -> dict[str, object]:
         "resolved_user_name": (
             None if resolved_employee_id else authenticated_username
         ),
-        "requested_pto_type": _pto_type_from_question(state["question"]),
-        "requested_balance_year": _balance_year_from_question(effective_question),
-        "requested_hours": _requested_hours_from_question(effective_question),
-        "requested_period": _requested_period_from_question(effective_question),
+        "requested_pto_type": (
+            _pto_type_from_question(state["question"])
+            if clarification_question
+            else _pto_type_from_question(balance_question)
+        ),
+        "requested_balance_year": _balance_year_from_question(balance_question),
+        "requested_hours": _requested_hours_from_question(balance_question),
+        "requested_period": _requested_period_from_question(balance_question),
         "error": None,
     }
 
@@ -146,6 +151,78 @@ async def retrieve_documents(state: AgentState) -> dict[str, object]:
         "retrieved_documents": result.retrieved_documents,
         "data_source": "pinecone",
         "tool_name": "existing_rag",
+        "error": None,
+    }
+
+
+async def query_pto_and_policy(state: AgentState) -> dict[str, object]:
+    """Keep independent outcomes; a provider failure must not erase useful data."""
+
+    pto_update = await query_pto_database(state)
+    pto_result = pto_update.get("tool_result")
+    category = state["requested_pto_type"] or "PTO"
+    policy_question = f"Regarding {category} leave: {state['policy_question']}"
+    kwargs: dict[str, object] = {}
+    if state["metadata_filter"] is not None:
+        kwargs["metadata_filter"] = state["metadata_filter"]
+    # The focused question is standalone. Do not send personal balances or the
+    # mixed conversation history to the policy model.
+    try:
+        policy_result = await to_thread(
+            rag_service_module.ask_question, policy_question, **kwargs
+        )
+    except Exception:  # noqa: BLE001
+        policy_result = None
+    return {
+        "pto_result": pto_result,
+        "policy_result": policy_result,
+        "retrieved_documents": (
+            policy_result.retrieved_documents if policy_result else []
+        ),
+        "error": None,
+    }
+
+
+def _generate_combined_response(state: AgentState) -> dict[str, object]:
+    result = state["pto_result"]
+    balance_complete = bool(result and result.get("found") and not result.get("error"))
+    if not result:
+        balance_answer = "I couldn't retrieve PTO balance data right now. Please try again."
+    elif state["requested_hours"] is not None or re.search(
+        r"\b(enough|afford|cover|take|use|request)\b",
+        state["balance_question"] or "",
+        re.IGNORECASE,
+    ):
+        balance_answer = _generate_pto_feasibility_response(
+            result, state["requested_hours"], state["requested_period"]
+        )
+        balance_complete = (
+            balance_complete
+            and state["requested_hours"] is not None
+            and len(result.get("balances", [])) == 1
+        )
+    else:
+        balance_answer = _generate_pto_response(result)
+
+    policy = state["policy_result"]
+    policy_complete = bool(
+        isinstance(policy, RAGResult)
+        and policy.resolution_status == "grounded"
+        and policy.sources_used
+    )
+    if policy_complete or (
+        isinstance(policy, RAGResult) and policy.resolution_status == "security_refusal"
+    ):
+        policy_answer = policy.answer
+    else:
+        policy_answer = (
+            "I couldn't verify the requested policy guidance from the available "
+            "documents. Please confirm the requirements with HR before submitting "
+            "your dates."
+        )
+    return {
+        "final_answer": f"{balance_answer}\n\nPolicy guidance: {policy_answer}",
+        "partial_answer": not (balance_complete and policy_complete),
         "error": None,
     }
 
@@ -284,10 +361,12 @@ def _generate_pto_feasibility_response(
     return " ".join(details)
 
 
-async def generate_response(state: AgentState) -> dict[str, str | None]:
+async def generate_response(state: AgentState) -> dict[str, object]:
     """Generate a user answer from the selected source without route details."""
 
     result = state["tool_result"]
+    if state["intent"] == "pto_and_policy":
+        return _generate_combined_response(state)
     if state["intent"] == "pto_balance" and isinstance(result, dict):
         return {"final_answer": _generate_pto_response(result), "error": None}
     if state["intent"] == "pto_request_feasibility" and isinstance(result, dict):

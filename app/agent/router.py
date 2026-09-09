@@ -75,6 +75,50 @@ _PTO_CATEGORY_ALIASES = {
     "other": "other",
 }
 
+_NOTICE_CUES = re.compile(
+    r"\b(notice|how far in advance|approval process|request procedure)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_BALANCE_CUES = re.compile(
+    r"\b(?:my|current|remaining|available)\b.*\b(?:balance|hours|pto|vacation)\b|"
+    r"\b(?:do i have|how much .* do i have|enough|afford|cover)\b|"
+    r"\b(?:can i|if i|i want to|i plan to)\s+(?:take|use|request)\b"
+    r".*\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|days?)\b",
+    re.IGNORECASE,
+)
+
+
+def split_pto_policy_question(question: str) -> tuple[str, str] | None:
+    """Recognize separate personal-balance and policy clauses conservatively."""
+
+    if not _PTO_DOMAIN_CUES.search(question):
+        return None
+    clauses = [
+        clause.strip(" ,?")
+        for clause in re.split(
+            r"\b(?:and|also)\b|[?;\n]|\.(?=\s+[A-Za-z])|"
+            r",(?=\s*(?:what|how|do|can)\b)",
+            question,
+            flags=re.IGNORECASE,
+        )
+        if clause.strip(" ,?")
+    ]
+    policy = []
+    balance = []
+    for clause in clauses:
+        if (
+            _DOCUMENT_CUES.search(clause)
+            or _PTO_POLICY_CUES.search(clause)
+            or _PTO_POLICY_USE_CUES.search(clause)
+            or _NOTICE_CUES.search(clause)
+        ):
+            policy.append(clause)
+        elif _PERSONAL_BALANCE_CUES.search(clause):
+            balance.append(clause)
+    if balance and policy:
+        return "? ".join(balance) + "?", "? ".join(policy) + "?"
+    return None
+
 
 def _message_fields(message: object) -> tuple[str | None, str | None]:
     if isinstance(message, dict):
@@ -123,11 +167,12 @@ def get_pto_clarification_question(state: AgentState) -> str | None:
 
 
 async def classify_request(state: AgentState) -> dict[str, object]:
-    """Choose a typed route, giving policy/document language precedence."""
+    """Recognize mixed clauses before applying single-source routing rules."""
 
     try:
         question = state["question"]
         clarification_question = get_pto_clarification_question(state)
+        combined = split_pto_policy_question(clarification_question or question)
         if _HUMAN_ESCALATION_CUES.search(question) or (
             _PTO_DOMAIN_CUES.search(question)
             and _PTO_DEDUCTION_CUES.search(question)
@@ -136,6 +181,10 @@ async def classify_request(state: AgentState) -> dict[str, object]:
             intent: Intent = "human_escalation"
             data_source = None
             tool_name = "human_handoff"
+        elif combined:
+            intent = "pto_and_policy"
+            data_source = "aws_mysql_and_pinecone"
+            tool_name = "get_current_pto_balance_and_existing_rag"
         elif clarification_question:
             intent: Intent = "pto_request_feasibility"
             data_source = "aws_mysql"
@@ -144,6 +193,7 @@ async def classify_request(state: AgentState) -> dict[str, object]:
             _DOCUMENT_CUES.search(question)
             or _PTO_POLICY_CUES.search(question)
             or _PTO_POLICY_USE_CUES.search(question)
+            or _NOTICE_CUES.search(question)
         ):
             intent: Intent = "document_question"
             data_source = "pinecone"
@@ -184,6 +234,8 @@ async def classify_request(state: AgentState) -> dict[str, object]:
         "intent": intent,
         "data_source": data_source,
         "tool_name": tool_name,
+        "balance_question": combined[0] if combined else None,
+        "policy_question": combined[1] if combined else None,
         "escalation_reason": (
             "user_requested_human" if intent == "human_escalation" else None
         ),
@@ -197,7 +249,7 @@ def route_classified_request(
 ]:
     if state["intent"] == "human_escalation":
         return "escalate_to_human"
-    if state["intent"] in {"pto_balance", "pto_request_feasibility"}:
+    if state["intent"] in {"pto_balance", "pto_request_feasibility", "pto_and_policy"}:
         return "resolve_employee"
     if state["intent"] == "document_question":
         return "retrieve_documents"
@@ -206,8 +258,14 @@ def route_classified_request(
 
 def route_after_employee_resolution(
     state: AgentState,
-) -> Literal["query_pto_database", "handle_error"]:
-    return "handle_error" if state["error"] else "query_pto_database"
+) -> Literal["query_pto_database", "query_pto_and_policy", "handle_error"]:
+    if state["error"]:
+        return "handle_error"
+    return (
+        "query_pto_and_policy"
+        if state["intent"] == "pto_and_policy"
+        else "query_pto_database"
+    )
 
 
 def route_after_pto_query(

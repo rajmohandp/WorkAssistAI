@@ -120,7 +120,7 @@ class AskResponse(BaseModel):
     answer: str = Field(min_length=1)
     sources: list[AskSourceResponse] = Field(default_factory=list)
     evaluation: EvaluationResponse | None = None
-    resolution: Literal["answered", "escalated"] = "answered"
+    resolution: Literal["answered", "escalated", "partial"] = "answered"
     handoff: HandoffResponse | None = None
 
 
