@@ -13,6 +13,7 @@ from app.agent.nodes import (
     escalate_to_human,
     generate_response,
     handle_error,
+    query_pto_and_policy,
     query_pto_database,
     resolve_employee,
     retrieve_documents,
@@ -36,6 +37,7 @@ def build_graph() -> CompiledStateGraph:
     builder.add_node("classify_request", classify_request)
     builder.add_node("resolve_employee", resolve_employee)
     builder.add_node("query_pto_database", query_pto_database)
+    builder.add_node("query_pto_and_policy", query_pto_and_policy)
     builder.add_node("retrieve_documents", retrieve_documents)
     builder.add_node("generate_response", generate_response)
     builder.add_node("handle_error", handle_error)
@@ -50,6 +52,7 @@ def build_graph() -> CompiledStateGraph:
     builder.add_conditional_edges("retrieve_documents", route_after_retrieval)
     builder.add_edge("escalate_to_human", END)
     builder.add_edge("generate_response", END)
+    builder.add_edge("query_pto_and_policy", "generate_response")
     builder.add_edge("handle_error", END)
     return builder.compile()
 

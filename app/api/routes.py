@@ -120,6 +120,10 @@ async def ask(
         )
         graph_result = await execute_graph(graph_state)
         result = graph_result["tool_result"]
+        if graph_result["intent"] == "pto_and_policy":
+            result = graph_result.get("policy_result")
+            if isinstance(result, RAGResult) and result.resolution_status != "grounded":
+                result = None
         sources = (
             [
                 AskSourceResponse(
@@ -133,7 +137,11 @@ async def ask(
         )
         evaluation = (
             EvaluationResponse(**result.evaluation)
-            if isinstance(result, RAGResult) and result.evaluation
+            if (
+                isinstance(result, RAGResult)
+                and result.evaluation
+                and graph_result["intent"] != "pto_and_policy"
+            )
             else None
         )
         return AskResponse(
@@ -142,7 +150,11 @@ async def ask(
             sources=sources,
             evaluation=evaluation,
             resolution=(
-                "escalated" if graph_result["escalation_required"] else "answered"
+                "escalated"
+                if graph_result["escalation_required"]
+                else "partial"
+                if graph_result.get("partial_answer")
+                else "answered"
             ),
             handoff=(
                 HandoffResponse(

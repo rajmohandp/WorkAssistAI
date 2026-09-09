@@ -371,9 +371,9 @@ st.caption(
     "your organization's document repository."
 )
 if selected_document:
-    st.info(f"Searching document: {selected_document}")
+    st.info(f"Document scope: {selected_document}")
 else:
-    st.info("Searching: All Documents")
+    st.info("Document scope: All Documents")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -394,7 +394,7 @@ if question := st.chat_input("Ask a question about your documents"):
 
     with st.chat_message("assistant"):
         try:
-            with st.spinner("Searching the document repository..."):
+            with st.spinner("Preparing your answer..."):
                 result = ask_question_http(
                     question,
                     access_token=st.session_state.access_token,

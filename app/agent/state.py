@@ -9,18 +9,19 @@ from langchain_core.documents import Document
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
-from src.rag_chain import ConversationHistory
+from src.rag_chain import ConversationHistory, RAGResult
 from src.retriever import MetadataFilter
 
 UserRole = Literal["admin", "user"]
 Intent = Literal[
     "pto_balance",
     "pto_request_feasibility",
+    "pto_and_policy",
     "document_question",
     "human_escalation",
     "unknown",
 ]
-DataSource = Literal["aws_mysql", "pinecone"]
+DataSource = Literal["aws_mysql", "pinecone", "aws_mysql_and_pinecone"]
 EscalationReason = Literal[
     "insufficient_document_context",
     "ambiguous_policy",
@@ -40,6 +41,11 @@ class AgentState(TypedDict):
     data_source: DataSource | None
     tool_name: str | None
     tool_result: Any | None
+    balance_question: str | None
+    policy_question: str | None
+    pto_result: dict[str, Any] | None
+    policy_result: RAGResult | None
+    partial_answer: bool
     retrieved_documents: list[Document]
     final_answer: str | None
     error: str | None
@@ -82,6 +88,11 @@ def create_agent_state(
         data_source=None,
         tool_name=None,
         tool_result=None,
+        balance_question=None,
+        policy_question=None,
+        pto_result=None,
+        policy_result=None,
+        partial_answer=False,
         retrieved_documents=[],
         final_answer=None,
         error=None,
