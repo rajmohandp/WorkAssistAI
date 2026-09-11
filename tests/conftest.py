@@ -33,3 +33,12 @@ _TEST_USERS = [
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("BACKEND_URL", "http://localhost:8000")
 os.environ.setdefault("AUTH_USERS_JSON", json.dumps(_TEST_USERS))
+
+# Force escalation email/database side effects off by default so the suite
+# never sends live mail or opens a real SMTP/database connection through a
+# developer's local .env. Tests that exercise these paths explicitly
+# monkeypatch send_escalation_email / get_employee_email, or inject a mock
+# session directly.
+os.environ["ADMIN_EMAIL"] = ""
+os.environ["SMTP_HOST"] = ""
+os.environ["DATABASE_URL"] = ""

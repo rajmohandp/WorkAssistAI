@@ -49,6 +49,7 @@ employee_pto_balances = Table(
     Column("employee_id", String(50), nullable=False),
     Column("user_name", String(100), nullable=False),
     Column("employee_name", String(150), nullable=False),
+    Column("email", String(255), nullable=True),
     Column("pto_type", String(32), nullable=False),
     Column("balance_year", Integer, nullable=False),
     Column("opening_balance", Numeric(8, 2), nullable=False),
@@ -201,3 +202,41 @@ def get_current_pto_balance(
         requested_pto_type=normalized_pto_type,
         balances=balances,
     )
+
+
+def get_employee_email(
+    employee_id: str,
+    *,
+    session: Session | None = None,
+) -> str | None:
+    """Look up an employee's email address from their PTO balance records."""
+
+    normalized_employee_id = employee_id.strip() if employee_id else ""
+    if not normalized_employee_id:
+        return None
+
+    statement = (
+        select(employee_pto_balances.c.email)
+        .where(employee_pto_balances.c.employee_id == normalized_employee_id)
+        .limit(1)
+    )
+    owns_session = session is None
+    resolved_session = session or get_session_factory()()
+    try:
+        email = resolved_session.execute(statement).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        discard_failed_session(resolved_session, exc)
+        logger.error(
+            "Employee email lookup failed",
+            extra={
+                "operation": "database",
+                "event": "employee_email_lookup_failed",
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise PTORepositoryError("Employee email could not be retrieved.") from exc
+    finally:
+        if owns_session:
+            resolved_session.close()
+
+    return str(email).strip() if email else None

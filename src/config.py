@@ -86,6 +86,13 @@ class EnvironmentSettings(BaseSettings):
     auth_users_json: SecretStr = SecretStr("")
     auth_token_ttl_seconds: int = 1800
     allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    admin_email: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    smtp_from_address: str = ""
+    smtp_use_tls: bool = True
 
     @field_validator("allowed_origins", mode="before")
     @classmethod
