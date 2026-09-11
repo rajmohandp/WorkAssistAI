@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from asyncio import to_thread
 from datetime import datetime
@@ -10,10 +11,14 @@ from typing import Any
 
 from app.agent.router import get_pto_clarification_question
 from app.agent.state import AgentState
+from app.repositories.pto_repository import get_employee_email
 from app.services import rag_service as rag_service_module
+from app.services.email_service import send_escalation_email
 from app.services.handoff_service import handoff_service
 from app.tools.pto_tool import get_current_pto_balance
 from src.rag_chain import RAGResult
+
+logger = logging.getLogger(__name__)
 
 _EMPLOYEE_ID_PATTERN = re.compile(
     r"\bEMP[A-Z0-9_-]*\d[A-Z0-9_-]*\b",
@@ -227,6 +232,56 @@ def _generate_combined_response(state: AgentState) -> dict[str, object]:
     }
 
 
+_ESCALATION_REASON_LABELS = {
+    "user_requested_human": "User-requested escalation",
+    "insufficient_document_context": "Insufficient handbook coverage",
+    "ambiguous_policy": "Ambiguous policy question",
+}
+
+
+def _escalation_reason_label(reason: str) -> str:
+    return _ESCALATION_REASON_LABELS.get(reason, reason.replace("_", " ").capitalize())
+
+
+async def _notify_admin_of_escalation(
+    state: AgentState, reason: str, record: Any
+) -> None:
+    """Best-effort admin email notification; never blocks the escalation."""
+
+    try:
+        employee_email = await to_thread(get_employee_email, state["user_id"])
+    except Exception:  # noqa: BLE001
+        employee_email = None
+
+    reason_label = _escalation_reason_label(reason)
+    try:
+        await to_thread(
+            send_escalation_email,
+            subject=f"[WorkAssist AI] Escalation {record.handoff_id} - {reason_label}",
+            body=(
+                "A WorkAssist AI conversation has been escalated to human "
+                "support.\n\n"
+                f"Employee:        {state['username']} ({state['user_id']})\n"
+                f"Escalation type: {reason_label}\n"
+                f"Submitted:       {record.created_at}\n"
+                f'Question:        "{state["question"]}"\n'
+                f"Reference ID:    {record.handoff_id}\n\n"
+                "Please review the employee's records and respond directly "
+                "— the employee is cc'd on this email."
+            ),
+            cc=employee_email,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Escalation email could not be sent",
+            extra={
+                "operation": "escalation",
+                "event": "escalation_email_failed",
+                "handoff_id": record.handoff_id,
+            },
+        )
+
+
 async def escalate_to_human(state: AgentState) -> dict[str, object]:
     """Queue an authenticated unresolved policy question for human review."""
 
@@ -266,6 +321,7 @@ async def escalate_to_human(state: AgentState) -> dict[str, object]:
             f"Reference: {record.handoff_id}."
         )
     )
+    await _notify_admin_of_escalation(state, reason, record)
     return {
         "escalation_required": True,
         "escalation_reason": reason,

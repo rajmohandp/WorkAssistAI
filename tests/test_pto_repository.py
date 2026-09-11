@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 from app.repositories.pto_repository import (
     PTORepositoryError,
     get_current_pto_balance,
+    get_employee_email,
 )
 
 
@@ -120,3 +121,41 @@ def test_wraps_database_exception_without_provider_details():
     with pytest.raises(PTORepositoryError) as caught:
         get_current_pto_balance("EMP001", balance_year=2026, session=session)
     assert str(caught.value) == "PTO balances could not be retrieved."
+
+
+def test_get_employee_email_returns_stored_address():
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = (
+        "employee@example.com"
+    )
+
+    result = get_employee_email("EMP001", session=session)
+
+    assert result == "employee@example.com"
+
+
+def test_get_employee_email_returns_none_when_missing():
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+
+    assert get_employee_email("MISSING", session=session) is None
+
+
+def test_get_employee_email_returns_none_for_blank_employee_id():
+    session = MagicMock()
+
+    assert get_employee_email("  ", session=session) is None
+    session.execute.assert_not_called()
+
+
+def test_get_employee_email_wraps_database_exception():
+    session = MagicMock()
+    session.execute.side_effect = OperationalError(
+        "SELECT sensitive detail",
+        {},
+        Exception("provider detail"),
+    )
+
+    with pytest.raises(PTORepositoryError) as caught:
+        get_employee_email("EMP001", session=session)
+    assert str(caught.value) == "Employee email could not be retrieved."

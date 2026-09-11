@@ -147,6 +147,48 @@ def test_security_refusal_does_not_escalate(monkeypatch):
     assert handoff_service.list_handoffs() == []
 
 
+def test_escalation_emails_admin_with_employee_cc(monkeypatch):
+    handoff_service.clear()
+    monkeypatch.setattr(
+        "app.agent.nodes.get_employee_email", lambda _employee_id: "user01@example.com"
+    )
+    sent = {}
+
+    def fake_send(*, subject, body, cc):
+        sent["subject"] = subject
+        sent["body"] = body
+        sent["cc"] = cc
+
+    monkeypatch.setattr("app.agent.nodes.send_escalation_email", fake_send)
+
+    result = _invoke(monkeypatch, _rag_result("insufficient_context"))
+
+    assert result["escalation_required"] is True
+    assert sent["cc"] == "user01@example.com"
+    assert result["handoff_id"] in sent["subject"]
+    assert "Insufficient handbook coverage" in sent["subject"]
+    assert "EMP001" in sent["body"]
+    assert "Insufficient handbook coverage" in sent["body"]
+
+
+def test_escalation_email_failure_does_not_break_response(monkeypatch):
+    handoff_service.clear()
+    monkeypatch.setattr(
+        "app.agent.nodes.get_employee_email",
+        lambda _employee_id: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
+
+    def failing_send(**_kwargs):
+        raise RuntimeError("smtp down")
+
+    monkeypatch.setattr("app.agent.nodes.send_escalation_email", failing_send)
+
+    result = _invoke(monkeypatch, _rag_result("insufficient_context"))
+
+    assert result["escalation_required"] is True
+    assert result["handoff_id"] in result["final_answer"]
+
+
 def test_handoff_queue_is_admin_only(monkeypatch):
     handoff_service.clear()
     _invoke(monkeypatch, _rag_result("insufficient_context"))
