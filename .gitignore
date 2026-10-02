@@ -25,6 +25,7 @@ __pycache__/
 .streamlit/secrets.toml
 
 # Editors and operating systems
+.claude/
 .idea/
 .vscode/
 .DS_Store
